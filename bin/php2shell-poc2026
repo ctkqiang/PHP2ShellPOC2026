@@ -1,0 +1,15 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Thin launcher: everything worth doing lives in the library. This file only
+# wires ARGV to the CLI and turns the CLI's answer into the process exit
+# code, so a CI job can gate on 0 / 1 / 2 without parsing any output.
+#
+# The load-path unshift is what makes ./bin/php2shell-poc2026 work straight
+# from a checkout with no gem install; once installed, RubyGems loads this
+# file from inside the gem where ../lib resolves on its own.
+
+$LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
+require "php2shell_poc2026"
+
+exit PHP2ShellPOC2026::CLI.new(ARGV).run
