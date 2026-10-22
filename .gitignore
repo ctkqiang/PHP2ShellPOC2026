@@ -1,0 +1,6 @@
+*.sw?
+*.swo
+.DS_Store
+*.gem
+/pkg/
+/.bundle/
