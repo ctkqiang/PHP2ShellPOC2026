@@ -17,6 +17,7 @@ module TestHelpers
         delay_ms: 0,
         max_requests: 25,
         no_proxy: true,
+        no_color: true,
         adaptive: true,
         retries: 0,
         timeout: 2,
@@ -74,4 +75,11 @@ end
 
 class Minitest::Test
   include TestHelpers
+
+  # Locale is process-global by design (the scan and the report must agree).
+  # A CLI test that exercises --lang must not leak that choice into the
+  # next test's fixtures.
+  def teardown
+    PHP2ShellPOC2026::I18n.locale = "en"
+  end
 end

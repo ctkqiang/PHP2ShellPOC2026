@@ -2,6 +2,7 @@
 
 require "uri"
 require_relative "errors"
+require_relative "i18n"
 require_relative "version"
 
 module PHP2ShellPOC2026
@@ -13,10 +14,11 @@ module PHP2ShellPOC2026
     ATTRS = %i[
       profile timeout connect_timeout verify_tls max_redirects max_body retries
       retry_after delay_ms threads max_requests adaptive
-      headers cookie user_agent proxy no_proxy basic_auth bearer ca_file
+      headers cookie user_agent browser_ua proxy no_proxy basic_auth bearer ca_file
       paths scope exclude require_scope
       format output compact no_banner no_color evidence quiet
       redteam toolchain toolchain_full authorized verbose fail_on dry_run config
+      interactive yes locale
     ].freeze
 
     PROFILES = %w[passive standard deep].freeze
@@ -42,6 +44,7 @@ module PHP2ShellPOC2026
         headers: {},
         cookie: nil,
         user_agent: USER_AGENT,
+        browser_ua: false,
         proxy: nil,
         no_proxy: false,
         basic_auth: nil,
@@ -65,7 +68,10 @@ module PHP2ShellPOC2026
         verbose: false,
         fail_on: "exposed",
         dry_run: false,
-        config: nil
+        config: nil,
+        interactive: true,
+        yes: false,
+        locale: "en"
       }
     end
 
@@ -107,6 +113,7 @@ module PHP2ShellPOC2026
       self.profile = "deep" if profile == "deep"
       self.format  = format.to_s
       self.fail_on = fail_on.to_s
+      self.locale  = I18n.normalize(locale)
       self.toolchain = true if toolchain_full
 
       self.headers = normalize_headers(headers)
@@ -125,6 +132,7 @@ module PHP2ShellPOC2026
       self.retry_after  = boolean(retry_after)
       self.adaptive     = boolean(adaptive)
       self.no_proxy     = boolean(no_proxy)
+      self.browser_ua   = boolean(browser_ua)
       self.require_scope = boolean(require_scope)
       self.compact      = boolean(compact)
       self.no_banner    = boolean(no_banner)
@@ -137,6 +145,8 @@ module PHP2ShellPOC2026
       self.authorized   = boolean(authorized)
       self.verbose      = boolean(verbose)
       self.dry_run      = boolean(dry_run)
+      self.interactive  = boolean(interactive)
+      self.yes          = boolean(yes)
 
       self.scope   = blank_to_nil(scope)
       self.exclude = blank_to_nil(exclude)
@@ -149,6 +159,9 @@ module PHP2ShellPOC2026
       self.ca_file = blank_to_nil(ca_file)
       self.user_agent = USER_AGENT if user_agent.nil? || user_agent.to_s.strip.empty?
       self.user_agent = user_agent.to_s
+      if browser_ua && self.user_agent == USER_AGENT
+        self.user_agent = BROWSER_USER_AGENT
+      end
       self
     end
 
