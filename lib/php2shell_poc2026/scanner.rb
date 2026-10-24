@@ -12,6 +12,7 @@ require_relative "environment"
 require_relative "frameworks"
 require_relative "hackability"
 require_relative "http_client"
+require_relative "i18n"
 require_relative "next_actions"
 require_relative "rate_limiter"
 require_relative "red_team"
@@ -70,6 +71,16 @@ module PHP2ShellPOC2026
     end
 
     def scan(raw_target, scope_decision: nil)
+      # The generators below (verdict reasons, next actions, detections)
+      # bake their prose into the result. Pin the locale for the whole scan
+      # so those strings match --lang even if a caller left a different
+      # locale set globally.
+      I18n.with_locale(@options.locale) do
+        perform_scan(raw_target, scope_decision: scope_decision)
+      end
+    end
+
+    def perform_scan(raw_target, scope_decision: nil)
       started = monotonic
       target  = raw_target.is_a?(Target) ? raw_target : Target.parse(raw_target)
       trace   = Trace.new(enabled: @options.verbose)
@@ -158,6 +169,8 @@ module PHP2ShellPOC2026
 
       ScanResult.failed(target, e, @options, trace: trace, meta: { scope: scope_decision })
     end
+
+    private :perform_scan
 
     # Dry-run plan. No socket is opened; this is the artifact an operator
     # can review against the program's scope and ROE before running anything.

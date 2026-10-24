@@ -22,6 +22,14 @@ module PHP2ShellPOC2026
       assessable  = exposed + patched + no_php
       errors      = results.count { |result| result.error }
 
+      # The decision counts are authoritative for the report's yes/no/unknown
+      # answer. They are normally equal to exposed/patched+no_php/unverified,
+      # but keeping them separate means the summary cannot disagree with the
+      # per-target DECISION cards if the evidence model changes.
+      hackable          = results.count { |result| result.hackability.answer == :yes }
+      not_hackable      = results.count { |result| result.hackability.answer == :no }
+      decision_unknown  = results.count { |result| result.hackability.answer == :unknown }
+
       {
         total: results.size,
         exposed: exposed,
@@ -30,6 +38,9 @@ module PHP2ShellPOC2026
         patched: patched,
         no_php: no_php,
         unverified: unverified,
+        hackable: hackable,
+        not_hackable: not_hackable,
+        decision_unknown: decision_unknown,
         unknown: counts[:unknown],
         inconclusive: counts[:inconclusive],
         errors: errors,

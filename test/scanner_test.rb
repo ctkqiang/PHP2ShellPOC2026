@@ -24,6 +24,38 @@ class ScannerTest < Minitest::Test
     assert_nil result.hackability.ratio
     assert_equal 0, result.fingerprint[:coverage][:usable]
     assert_equal 3, result.fingerprint[:coverage][:attempted]
+    assert_equal "unknown", result.environment.sapi
+  end
+
+  def test_version_leaked_on_a_block_page_is_still_vulnerable
+    result = scan_with do |uri, purpose, _requests|
+      probe(uri, status: 403,
+                 headers: { "server" => "openresty", "x-powered-by" => "PHP/8.2.34" },
+                 body: "<html><title>Access Denied</title></html>",
+                 purpose: purpose)
+    end
+
+    assert_equal :vulnerable, result.verdict.status
+    assert_equal :exposed, result.hackability.rating
+    assert_equal :yes, result.hackability.answer
+    assert_includes result.verdict.reason, "PHP 8.2.34"
+  end
+
+  def test_ovhcloud_block_page_is_captured_as_environment_evidence
+    result = scan_with do |uri, purpose, _requests|
+      probe(uri, status: 403,
+                 headers: { "server" => "openresty", "x-ovh-webhosting-id" => "abc123" },
+                 body: "<html><title>Your request has been blocked - OVHcloud</title>" \
+                       "<body>Request blocked due to suspicious activity.</body></html>",
+                 purpose: purpose)
+    end
+
+    block_page = result.environment.block_page
+    refute_nil block_page
+    assert_equal "OVHcloud", block_page.vendor
+    assert_includes block_page.summary, "suspicious activity"
+    assert block_page.ua_sensitive
+    assert_equal "OVHcloud", result.environment.to_h[:block_page][:vendor]
   end
 
   def test_root_denied_but_control_404_is_restricted
@@ -156,6 +188,22 @@ class ScannerTest < Minitest::Test
     assert_nil result.risk[:score]
   end
 
+  def test_branch_only_eol_version_is_exposed
+    result = scan_with do |uri, purpose, _requests|
+      if uri.path == "/" || uri.path == "/index.php"
+        probe(uri, status: 200, headers: { "x-powered-by" => "PHP/8.1" }, purpose: purpose)
+      else
+        probe(uri, status: 404, purpose: purpose)
+      end
+    end
+
+    assert_equal :eol, result.verdict.status
+    assert_equal :eol, result.verdict.reason_code
+    assert_equal :exposed, result.hackability.rating
+    assert_equal :yes, result.hackability.answer
+    assert_equal 10.0, result.risk[:score]
+  end
+
   def test_phpinfo_version_is_read
     result = scan_with do |uri, purpose, _requests|
       if uri.path == "/"
@@ -168,6 +216,22 @@ class ScannerTest < Minitest::Test
 
     assert_equal :vulnerable, result.verdict.status
     assert_equal "phpinfo() page", result.verdict.version_source
+  end
+
+  def test_statamic_header_is_php_evidence_even_without_a_php_version
+    result = scan_with do |uri, purpose, _requests|
+      if uri.path == "/"
+        probe(uri, status: 200, headers: { "x-powered-by" => "Statamic", "server" => "nginx" },
+                   body: "<html><title>Home</title></html>", purpose: purpose)
+      else
+        probe(uri, status: 404, purpose: purpose)
+      end
+    end
+
+    assert_equal :unknown, result.verdict.status
+    assert_equal :no_version, result.verdict.reason_code
+    assert result.verdict.attack_surface[:php_detected]
+    assert_equal :unknown, result.hackability.answer
   end
 
   def test_fpm_file_not_found_is_positive_php_evidence
@@ -199,6 +263,8 @@ class ScannerTest < Minitest::Test
     assert_equal :no_php, result.verdict.status
     assert_equal 0.0, result.risk[:score]
     assert_equal :not_exposed, result.hackability.rating
+    assert_equal :no, result.hackability.answer
+    assert_includes result.hackability.action, "check sibling hosts"
   end
 
   def test_deep_mode_discovers_sitemap_php_path

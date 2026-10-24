@@ -30,6 +30,11 @@ module PHP2ShellPOC2026
         cakephp_evidence(probe).each { |e| add(found, "CakePHP", e) }
         yii_evidence(probe).each { |e| add(found, "Yii", e) }
         thinkphp_evidence(probe).each { |e| add(found, "ThinkPHP", e) }
+        statamic_evidence(probe).each { |e| add(found, "Statamic", e) }
+        craft_evidence(probe).each { |e| add(found, "Craft CMS", e) }
+        magento_evidence(probe).each { |e| add(found, "Magento", e) }
+        prestashop_evidence(probe).each { |e| add(found, "PrestaShop", e) }
+        opencart_evidence(probe).each { |e| add(found, "OpenCart", e) }
       end
 
       found.map do |name, entries|
@@ -118,6 +123,40 @@ module PHP2ShellPOC2026
       evidence = []
       evidence << high("X-Powered-By: ThinkPHP") if probe.header("x-powered-by").to_s.match?(/ThinkPHP/i)
       evidence << high("think_ cookie") if cookie_names(probe).any? { |c| c.match?(/\Athink_/i) }
+      evidence
+    end
+
+    def statamic_evidence(probe)
+      evidence = []
+      evidence << high("X-Powered-By: Statamic") if probe.header("x-powered-by").to_s.match?(/Statamic/i)
+      evidence << high("statamic cookie") if cookie_names(probe).any? { |c| c.match?(/\Astatamic/i) }
+      evidence
+    end
+
+    def craft_evidence(probe)
+      evidence = []
+      evidence << high("X-Powered-By: Craft CMS") if probe.header("x-powered-by").to_s.match?(/Craft CMS/i)
+      evidence << high("CraftSessionId cookie") if cookie_names(probe).any? { |c| c.match?(/\ACraftSessionId/i) }
+      evidence
+    end
+
+    def magento_evidence(probe)
+      evidence = []
+      evidence << high("X-Powered-By: Magento") if probe.header("x-powered-by").to_s.match?(/Magento/i)
+      evidence << high("mage-cache-sessid cookie") if cookie_names(probe).any? { |c| c.match?(/\Amage-cache-sessid/i) }
+      evidence
+    end
+
+    def prestashop_evidence(probe)
+      evidence = []
+      evidence << high("X-Powered-By: PrestaShop") if probe.header("x-powered-by").to_s.match?(/PrestaShop/i)
+      evidence << high("PrestaShop cookie") if cookie_names(probe).any? { |c| c.match?(/\APrestaShop-/i) }
+      evidence
+    end
+
+    def opencart_evidence(probe)
+      evidence = []
+      evidence << high("OCSESSID cookie") if cookie_names(probe).any? { |c| c.match?(/\AOCSESSID/i) }
       evidence
     end
 

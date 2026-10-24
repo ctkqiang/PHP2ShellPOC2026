@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "rubygems"
+require_relative "i18n"
 require_relative "sanitize"
 
 module PHP2ShellPOC2026
@@ -62,48 +63,62 @@ module PHP2ShellPOC2026
       # but cap confidence at low and say so.
       if %i[blocked unreachable rate_limited server_error].include?(access_state)
         if version
-          return versioned(version, version_source, precision, surface, access, :low,
-                           " — observed on an error response; #{access.reason}")
+          caveat = I18n.t("data.verdict.caveat.error_response",
+                          default: " — observed on an error response; %{reason}", reason: access.reason)
+          return versioned(version, version_source, precision, surface, access, "low", caveat)
         end
         return new(status: :inconclusive, reason_code: access_state,
-                   reason: "#{access.reason} — exposure is unverified, not absent",
+                   reason: I18n.t("data.verdict.unverified",
+                                  default: "%{reason} — exposure is unverified, not absent",
+                                  reason: access.reason),
                    confidence: "low", attack_surface: surface, access: access)
       end
 
       if access_state == :restricted
         if version
-          return versioned(version, version_source, precision, surface, access, :low,
-                           " — root path restricted; #{access.reason}")
+          caveat = I18n.t("data.verdict.caveat.restricted",
+                          default: " — root path restricted; %{reason}", reason: access.reason)
+          return versioned(version, version_source, precision, surface, access, "low", caveat)
         end
         return new(status: :inconclusive, reason_code: :restricted,
-                   reason: "#{access.reason} — the interpreter could not be assessed",
+                   reason: I18n.t("data.verdict.restricted",
+                                  default: "%{reason} — the interpreter could not be assessed",
+                                  reason: access.reason),
                    confidence: "low", attack_surface: surface, access: access)
       end
 
       if access_state == :auth_wall && version.nil?
         return new(status: :inconclusive, reason_code: :auth_wall,
-                   reason: "#{access.reason} — read the version host-side or assess the authenticated surface only with authorization",
+                   reason: I18n.t("data.verdict.auth_wall",
+                                  default: "%{reason} — read the version host-side or assess the " \
+                                           "authenticated surface only with authorization",
+                                  reason: access.reason),
                    confidence: "low", attack_surface: surface, access: access)
       end
 
       if access_state == :soft_404 && version.nil?
         return new(status: :inconclusive, reason_code: :soft_404,
-                   reason: "#{access.reason} — no version header was exposed, so exposure is unverified",
+                   reason: I18n.t("data.verdict.soft_404",
+                                  default: "%{reason} — no version header was exposed, so exposure is unverified",
+                                  reason: access.reason),
                    confidence: "low", attack_surface: surface, access: access)
       end
 
       unless version
         if surface[:php_detected]
           return new(status: :unknown, reason_code: :no_version,
-                     reason: "PHP is present but no version was exposed — exposure is unconfirmed; " \
-                             "try --profile deep or read the version host-side",
+                     reason: I18n.t("data.verdict.no_version",
+                                    default: "PHP is present but no version was exposed — exposure is unconfirmed; " \
+                                             "try --profile deep or read the version host-side"),
                      confidence: access_state == :open ? "medium" : "low",
                      attack_surface: surface, access: access)
         end
 
         return new(status: :no_php, reason_code: :no_php,
-                   reason: "no PHP markers were observed on the reachable paths and the control path behaved normally — " \
-                           "no PHP surface found on this route (this is not proof that other vhosts are PHP-free)",
+                   reason: I18n.t("data.verdict.no_php",
+                                  default: "no PHP markers were observed on the reachable paths and the control " \
+                                           "path behaved normally — no PHP surface found on this route (this is " \
+                                           "not proof that other vhosts are PHP-free)"),
                    confidence: access_state == :open ? "medium" : "low",
                    attack_surface: surface, access: access)
       end
@@ -118,12 +133,27 @@ module PHP2ShellPOC2026
       suffix = caveat.to_s
 
       if precision == :minor
+        # A branch-only value is normally not enough to decide patch state,
+        # but it is enough when the branch never received a fix. PHP/8.1
+        # behind a browser-compatibility request should be EOL, not UNKNOWN.
+        if KNOWN_EOL_BRANCHES.include?(branch)
+          return new(status: :eol, reason_code: :eol, version: version, version_source: source,
+                     version_precision: precision, confidence: confidence, attack_surface: surface,
+                     access: access, branch: branch, fix_floor: nil,
+                     reason: I18n.t("data.verdict.eol_branch",
+                                    default: "PHP branch %{branch} is end-of-life — no upstream fix exists; " \
+                                             "only distro backports or an upgrade will clear this%{suffix}",
+                                    branch: branch, suffix: suffix))
+        end
+
         return new(status: :unknown, reason_code: :branch_only,
                    version: version, version_source: source, version_precision: precision,
                    confidence: "low", attack_surface: surface, access: access,
                    branch: branch, fix_floor: floor,
-                   reason: "only a branch-level version (#{version}) was exposed; the patch level is unknown — " \
-                           "compare against #{floor || 'the branch fix level'} host-side#{suffix}")
+                   reason: I18n.t("data.verdict.branch_only",
+                                  default: "only a branch-level version (%{version}) was exposed; the patch level " \
+                                           "is unknown — compare against %{floor} host-side%{suffix}",
+                                  version: version, floor: floor || "the branch fix level", suffix: suffix))
       end
 
       if floor
@@ -131,31 +161,41 @@ module PHP2ShellPOC2026
           new(status: :patched, reason_code: :patched, version: version,
               version_source: source, version_precision: precision, confidence: confidence,
               attack_surface: surface, access: access, branch: branch, fix_floor: floor,
-              reason: "PHP #{version} is at or above the #{branch} fix level (#{floor})#{suffix}")
+              reason: I18n.t("data.verdict.patched",
+                             default: "PHP %{version} is at or above the %{branch} fix level (%{floor})%{suffix}",
+                             version: version, branch: branch, floor: floor, suffix: suffix))
         else
           new(status: :vulnerable, reason_code: :vulnerable, version: version,
               version_source: source, version_precision: precision, confidence: confidence,
               attack_surface: surface, access: access, branch: branch, fix_floor: floor,
-              reason: "PHP #{version} is below the #{branch} fix level (#{floor}) — update now#{suffix}")
+              reason: I18n.t("data.verdict.vulnerable",
+                             default: "PHP %{version} is below the %{branch} fix level (%{floor}) — update now%{suffix}",
+                             version: version, branch: branch, floor: floor, suffix: suffix))
         end
       elsif KNOWN_EOL_BRANCHES.include?(branch)
         new(status: :eol, reason_code: :eol, version: version, version_source: source,
             version_precision: precision, confidence: confidence, attack_surface: surface,
             access: access, branch: branch, fix_floor: nil,
-            reason: "PHP #{version} (branch #{branch}) is end-of-life — no upstream fix exists; " \
-                    "only distro backports or an upgrade will clear this#{suffix}")
+            reason: I18n.t("data.verdict.eol",
+                           default: "PHP %{version} (branch %{branch}) is end-of-life — no upstream fix exists; " \
+                                    "only distro backports or an upgrade will clear this%{suffix}",
+                           version: version, branch: branch, suffix: suffix))
       elsif Gem::Version.new(branch) > Gem::Version.new(FIXED_RELEASES.keys.max)
         new(status: :unknown, reason_code: :newer_than_table, version: version,
             version_source: source, version_precision: precision, confidence: "low",
             attack_surface: surface, access: access, branch: branch, fix_floor: nil,
-            reason: "PHP #{version} is newer than this tool's fix table (#{FIXED_RELEASES.keys.max}.x) — " \
-                    "verify against the current PHP release notes#{suffix}")
+            reason: I18n.t("data.verdict.newer_than_table",
+                           default: "PHP %{version} is newer than this tool's fix table (%{max}.x) — " \
+                                    "verify against the current PHP release notes%{suffix}",
+                           version: version, max: FIXED_RELEASES.keys.max, suffix: suffix))
       else
         new(status: :eol, reason_code: :eol, version: version, version_source: source,
             version_precision: precision, confidence: confidence, attack_surface: surface,
             access: access, branch: branch, fix_floor: nil,
-            reason: "PHP #{version} (branch #{branch}) is outside the supported fix table — treat as end-of-life " \
-                    "until a vendor advisory says otherwise#{suffix}")
+            reason: I18n.t("data.verdict.outside_table",
+                           default: "PHP %{version} (branch %{branch}) is outside the supported fix table — " \
+                                    "treat as end-of-life until a vendor advisory says otherwise%{suffix}",
+                           version: version, branch: branch, suffix: suffix))
       end
     end
 

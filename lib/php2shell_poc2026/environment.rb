@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
+require_relative "block_page"
 require_relative "frameworks"
+require_relative "i18n"
 require_relative "sanitize"
 
 module PHP2ShellPOC2026
@@ -15,7 +17,7 @@ module PHP2ShellPOC2026
   class Environment
     attr_reader :server, :via, :edge, :cdn, :waf, :hosting, :sapi,
                 :sapi_rationale, :frameworks, :framework_versions, :tls,
-                :dns, :access
+                :dns, :access, :block_page
 
     def initialize(probes, access:, tls: nil, dns: nil, surface: {})
       @probes      = probes
@@ -28,6 +30,7 @@ module PHP2ShellPOC2026
       @via         = header("via")
       @edge        = detect_edge
       @cdn         = detect_cdn
+      @block_page  = BlockPage.analyze(probes, access: access)
       @waf         = detect_waf
       @hosting     = detect_hosting
       @frameworks  = Frameworks.detect(probes)
@@ -61,6 +64,7 @@ module PHP2ShellPOC2026
         framework_versions: framework_versions,
         tls: tls,
         dns: dns,
+        block_page: block_page&.to_h,
         access: access.to_h
       }
     end
@@ -137,6 +141,7 @@ module PHP2ShellPOC2026
     end
 
     def detect_waf
+      return "ovhcloud" if @block_page&.vendor == "OVHcloud"
       return "cloudflare" if header("cf-ray") || header("cf-mitigated") || @server.to_s.match?(/cloudflare/i)
       return "sucuri" if header("x-sucuri-id") || bodies.match?(/Sucuri Website Firewall/i)
       return "imperva" if header("x-iinfo") || header("x-cdn").to_s.match?(/incapsula/i) ||
@@ -158,6 +163,7 @@ module PHP2ShellPOC2026
     end
 
     def detect_hosting
+      return "OVHcloud" if header("x-ovh-webhosting-id")
       return "cPanel" if header_name?(/\Ax-cpanel-/i) || @server.to_s.match?(/cpanel/i)
       return "Plesk" if header("x-powered-by").to_s.match?(/PleskLin/i) || @server.to_s.match?(/plesk/i)
       return "WP Engine" if header("x-wp-engine") || @server.to_s.match?(/wp engine/i)
@@ -183,23 +189,47 @@ module PHP2ShellPOC2026
       server = @server.to_s.downcase
       php    = php_detected?
 
-      if server.include?("litespeed")
-        ["litespeed", "LiteSpeed SAPI — affected per the PHP advisory"]
-      elsif server.include?("apache") && !cdn?
-        ["mod_php (likely)", "Apache server header with no CDN in front — the highest-risk setup per the PHP team"]
-      elsif server.include?("apache")
-        ["mod_php (possible)", "Apache behind #{cdn}; the origin SAPI is unconfirmed from outside"]
-      elsif server.include?("openresty")
-        ["php-fpm (possible)", "openresty is nginx-based and commonly proxies to PHP-FPM; worker affinity is unconfirmed"]
-      elsif server.include?("nginx") || header("x-fastcgi-cache")
-        ["php-fpm (likely)", "nginx/fastcgi fingerprint — FPM is affected but needs same-worker request pairing"]
-      elsif server.include?("iis")
-        ["php-cgi (possible)", "IIS front end with PHP markers — CGI/FastCGI SAPI, worker model unconfirmed"]
-      elsif (server.include?("caddy") || server.include?("traefik") || server.include?("envoy")) && php
-        ["php-fpm (possible)", "#{@edge} front end with PHP markers — usually proxies to FPM"]
-      else
-        ["unknown", "no SAPI fingerprint exposed"]
+      # A block page is answered by the edge, not the origin. Inferring FPM
+      # from "openresty" here would turn an unknown into false precision.
+      if !php && @access && !@access.open?
+        return ["unknown",
+                sapi_note("unobservable",
+                          "the edge answered before the origin; the SAPI is not observable from this response")]
       end
+
+      if server.include?("litespeed")
+        ["litespeed", sapi_note("litespeed", "LiteSpeed SAPI — affected per the PHP advisory")]
+      elsif server.include?("apache") && !cdn?
+        ["mod_php (likely)",
+         sapi_note("mod_php_likely",
+                   "Apache server header with no CDN in front — the highest-risk setup per the PHP team")]
+      elsif server.include?("apache")
+        ["mod_php (possible)",
+         sapi_note("mod_php_possible",
+                   "Apache behind %{cdn}; the origin SAPI is unconfirmed from outside", cdn: cdn)]
+      elsif server.include?("openresty")
+        ["php-fpm (possible)",
+         sapi_note("fpm_openresty",
+                   "openresty is nginx-based and commonly proxies to PHP-FPM; worker affinity is unconfirmed")]
+      elsif server.include?("nginx") || header("x-fastcgi-cache")
+        ["php-fpm (likely)",
+         sapi_note("fpm_likely",
+                   "nginx/fastcgi fingerprint — FPM is affected but needs same-worker request pairing")]
+      elsif server.include?("iis")
+        ["php-cgi (possible)",
+         sapi_note("cgi_iis",
+                   "IIS front end with PHP markers — CGI/FastCGI SAPI, worker model unconfirmed")]
+      elsif (server.include?("caddy") || server.include?("traefik") || server.include?("envoy")) && php
+        ["php-fpm (possible)",
+         sapi_note("fpm_front_end",
+                   "%{edge} front end with PHP markers — usually proxies to FPM", edge: @edge)]
+      else
+        ["unknown", sapi_note("unknown", "no SAPI fingerprint exposed")]
+      end
+    end
+
+    def sapi_note(key, default, **vars)
+      I18n.t("data.environment.sapi.#{key}", default: default, **vars)
     end
   end
 end
