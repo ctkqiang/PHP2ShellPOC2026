@@ -25,10 +25,11 @@ module PHP2ShellPOC2026
 
         lines << "## Summary"
         lines << ""
-        lines << "| Target | Verdict | Risk | Hackability | Evidence |"
-        lines << "|---|---|---|---|---|"
+        lines << "| Target | Verdict | Hackable? | Risk | Hackability | Evidence |"
+        lines << "|---|---|---|---|---|---|"
         results.each do |result|
-          lines << "| #{cell(result.target.display)} | #{cell(result.verdict.label)} | #{cell(risk_text(result))} | " \
+          lines << "| #{cell(result.target.display)} | #{cell(result.verdict.label)} | " \
+                   "#{cell(decision_word(result.hackability))} | #{cell(risk_text(result))} | " \
                    "#{cell(result.hackability.label)} | #{evidence_cell(result)} |"
         end
         lines << ""
@@ -37,6 +38,8 @@ module PHP2ShellPOC2026
 
         lines << "## Run summary"
         lines << ""
+        lines << "- Hackable: #{summary[:hackable]} yes · #{summary[:not_hackable]} no · " \
+                 "#{summary[:decision_unknown]} unknown"
         lines << "- Exposed: #{summary[:exposed]} (vulnerable #{summary[:vulnerable]}, end-of-life #{summary[:eol]})"
         lines << "- Patched: #{summary[:patched]}"
         lines << "- No PHP observed: #{summary[:no_php]}"
@@ -58,6 +61,8 @@ module PHP2ShellPOC2026
         lines << ""
         lines << "**Verdict:** #{v.label} (`#{v.status}`) · **Risk:** #{risk_text(result)} · " \
                  "**Confidence:** #{v.confidence} · **Hackability:** #{h.label}"
+        lines << ""
+        lines << "> **Decision: #{decision_text(h)}**"
         lines << ""
         lines << "- **Version:** #{v.version || 'unknown'}#{v.version_source ? " (source: #{v.version_source})" : ''}"
         lines << "- **Reason:** #{v.reason}"
@@ -173,6 +178,27 @@ module PHP2ShellPOC2026
       def self.risk_text(result)
         score = result.risk[:score]
         score.nil? ? "n/a (#{result.risk[:grade]})" : "#{format('%.1f', score)}/10 (#{result.risk[:grade]})"
+      end
+
+      # The yes/no/unknown answer plus the one action that follows from it.
+      # LIKELY is answered YES because the burden is on disproving exposure.
+      def self.decision_text(h)
+        case h.answer
+        when :yes
+          "YES — hackable via PHP2Shell. #{h.action}"
+        when :no
+          "NO — not hackable on the probed paths. #{h.action}"
+        else
+          "UNKNOWN — cannot be determined with the evidence collected. #{h.action}"
+        end
+      end
+
+      def self.decision_word(h)
+        case h.answer
+        when :yes then "YES"
+        when :no then "NO"
+        else "UNKNOWN"
+        end
       end
 
       def self.evidence_cell(result)

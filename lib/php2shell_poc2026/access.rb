@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require_relative "i18n"
 require_relative "sanitize"
 
 module PHP2ShellPOC2026
@@ -38,20 +39,28 @@ module PHP2ShellPOC2026
       root   ||= main.first
       details  = stats(probes, main, controls)
 
-      return new(state: :unknown, reason: "no probes were completed", details: details) if probes.empty?
+      return new(state: :unknown,
+                 reason: I18n.t("data.access.no_probes", default: "no probes were completed"),
+                 details: details) if probes.empty?
       return unreachable(main, details) if main.all?(&:error?) && controls.all?(&:error?)
       return unreachable(main, details) if root&.error? && controls.all?(&:error?)
 
       if root&.rate_limited? || rate_limited?(main, root)
         return new(state: :rate_limited,
-                   reason: "the origin returned HTTP 429 (Rate Limit) — the scan rate was too high or the edge is throttling",
+                   reason: I18n.t("data.access.rate_limited",
+                                  default: "the origin returned HTTP 429 (Rate Limit) — the scan rate was too " \
+                                           "high or the edge is throttling"),
                    control: control_summary(controls.first, root), details: details)
       end
 
       if root&.error?
         return new(state: :unreachable,
-                   reason: "the root probe failed (#{root.error_kind}: #{Sanitize.terminal(root.error, max: 200)}) " \
-                           "while other paths responded — the application is partially reachable but the root could not be assessed",
+                   reason: I18n.t("data.access.root_failed",
+                                  default: "the root probe failed (%{kind}: %{error}) while other paths " \
+                                           "responded — the application is partially reachable but the root " \
+                                           "could not be assessed",
+                                  kind: root.error_kind,
+                                  error: Sanitize.terminal(root.error, max: 200)),
                    control: control_summary(controls.first, root), details: details)
       end
 
@@ -62,36 +71,48 @@ module PHP2ShellPOC2026
         end
         if controls.any?(&:not_found?)
           return new(state: :restricted,
-                     reason: "the root returned HTTP #{root.status} but a random control path returned 404 — " \
-                             "path-level access control, not a blanket edge block",
+                     reason: I18n.t("data.access.restricted_404",
+                                    default: "the root returned HTTP %{status} but a random control path " \
+                                             "returned 404 — path-level access control, not a blanket edge block",
+                                    status: root.status),
                      control: control_summary(controls.find(&:not_found?), root), details: details)
         end
         return new(state: :restricted,
-                   reason: "the root returned HTTP #{root.status} and the control path behaved differently — " \
-                           "the application is reachable but this path is protected",
+                   reason: I18n.t("data.access.restricted_other",
+                                  default: "the root returned HTTP %{status} and the control path behaved " \
+                                           "differently — the application is reachable but this path is protected",
+                                  status: root.status),
                    control: control_summary(controls.first, root), details: details)
       end
 
       if auth_wall?(root, controls)
         return new(state: :auth_wall,
-                   reason: "the site redirects to, or renders, an authentication page — PHP may exist but the surface is behind a login",
+                   reason: I18n.t("data.access.auth_wall",
+                                  default: "the site redirects to, or renders, an authentication page — PHP may " \
+                                           "exist but the surface is behind a login"),
                    control: control_summary(controls.first, root), details: details)
       end
 
       if (catchall = controls.find { |control| soft_404?(root, control) })
         return new(state: :soft_404,
-                   reason: "a random nonexistent path returned HTTP #{catchall.status} with content similar to the root — " \
-                           "the server uses catch-all/soft-404 routing, so path status codes are not trustworthy",
+                   reason: I18n.t("data.access.soft_404",
+                                  default: "a random nonexistent path returned HTTP %{status} with content " \
+                                           "similar to the root — the server uses catch-all/soft-404 routing, " \
+                                           "so path status codes are not trustworthy",
+                                  status: catchall.status),
                    control: control_summary(catchall, root), details: details)
       end
 
       if root&.server_error? || main.all?(&:server_error?)
         return new(state: :server_error,
-                   reason: "the origin returned HTTP 5xx on the root probe — the application is unhealthy, not necessarily unpatched",
+                   reason: I18n.t("data.access.server_error",
+                                  default: "the origin returned HTTP 5xx on the root probe — the application is " \
+                                           "unhealthy, not necessarily unpatched"),
                    control: control_summary(controls.first, root), details: details)
       end
 
-      new(state: :open, reason: "application responded normally",
+      new(state: :open,
+          reason: I18n.t("data.access.open", default: "application responded normally"),
           control: control_summary(controls.first, root), details: details)
     end
 
@@ -108,9 +129,11 @@ module PHP2ShellPOC2026
     def self.unreachable(main, details)
       first = main.find(&:error?)
       reason = if first
-                 "no usable response — #{first.error_kind}: #{Sanitize.terminal(first.error, max: 200)}"
+                 I18n.t("data.access.unreachable_error",
+                        default: "no usable response — %{kind}: %{error}",
+                        kind: first.error_kind, error: Sanitize.terminal(first.error, max: 200))
                else
-                 "no usable response from the target"
+                 I18n.t("data.access.unreachable", default: "no usable response from the target")
                end
       new(state: :unreachable, reason: reason, details: details)
     end
@@ -118,10 +141,16 @@ module PHP2ShellPOC2026
     def self.blocked_reason(root, controls)
       statuses = ([root] + controls).map(&:status).compact.uniq.join("/")
       server   = ([root] + controls).map(&:server).compact.first
-      bits = ["every probe, including a random control path, returned HTTP #{statuses}"]
-      bits << "from #{Sanitize.header(server)}" if server
-      bits << "the edge denied the scanner before the application answered"
-      bits.join(" — ")
+      bits = [I18n.t("data.access.blocked.statuses",
+                     default: "every probe, including a random control path, returned HTTP %{statuses}",
+                     statuses: statuses)]
+      if server
+        bits << I18n.t("data.access.blocked.server", default: "from %{server}",
+                                                       server: Sanitize.header(server))
+      end
+      bits << I18n.t("data.access.blocked.edge",
+                     default: "the edge denied the scanner before the application answered")
+      bits.join(I18n.t("data.access.blocked.separator", default: " — "))
     end
 
     # A catch-all page can be recognised three ways: the bodies are nearly

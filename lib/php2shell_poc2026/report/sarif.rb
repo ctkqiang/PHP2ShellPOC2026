@@ -89,6 +89,9 @@ module PHP2ShellPOC2026
                     patched: summary[:patched],
                     no_php: summary[:no_php],
                     unverified: summary[:unverified],
+                    hackable: summary[:hackable],
+                    not_hackable: summary[:not_hackable],
+                    decision_unknown: summary[:decision_unknown],
                     requests: summary[:requests],
                     coverage: summary[:coverage]
                   }
@@ -132,6 +135,9 @@ module PHP2ShellPOC2026
             confidence: v.confidence,
             risk_score: result.risk[:score],
             risk_grade: result.risk[:grade],
+            hackable: result.hackability.hackable?,
+            answer: result.hackability.answer.to_s,
+            decision_action: result.hackability.action,
             access_state: v.access&.state,
             access_reason: v.access&.reason,
             server: result.environment.server,
@@ -154,10 +160,13 @@ module PHP2ShellPOC2026
 
       def self.message_for(result)
         v = result.verdict
+        h = result.hackability
+        answer = h.answer.to_s.upcase
         if v.exposed?
-          "#{result.target.display}: #{v.reason} (risk #{result.risk[:score]}/10, confidence #{v.confidence})."
+          "#{result.target.display}: PHP2Shell decision #{answer} — #{v.reason} " \
+            "(risk #{result.risk[:score]}/10, confidence #{v.confidence}). Action: #{h.action}."
         else
-          "#{result.target.display}: exposure unverified — #{v.reason} " \
+          "#{result.target.display}: PHP2Shell decision #{answer} — exposure unverified: #{v.reason} " \
             "Do not treat this as a clean result; verify host-side or from an approved vantage point."
         end
       end

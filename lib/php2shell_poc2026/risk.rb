@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "i18n"
+
 module PHP2ShellPOC2026
   # Exposure severity and exploit friction are different questions, so they
   # get different numbers. A vulnerable interpreter behind a WAF is still a
@@ -20,7 +22,7 @@ module PHP2ShellPOC2026
       {
         score: score,
         grade: score.nil? ? "UNKNOWN" : grade(score),
-        scale: "exposure severity (CVSS-shaped, not a CVSS vector)",
+        scale: I18n.t("data.risk.scale", default: "exposure severity (CVSS-shaped, not a CVSS vector)"),
         friction: friction(verdict, environment)
       }
     end
@@ -29,25 +31,40 @@ module PHP2ShellPOC2026
       factors = []
 
       if environment.waf
-        factors << { factor: "waf", weight: 3, note: "#{environment.waf} may block crafted requests" }
+        factors << { factor: "waf", weight: 3,
+                     note: I18n.t("data.risk.friction.waf",
+                                  default: "%{waf} may block crafted requests", waf: environment.waf) }
       end
       if environment.cdn?
-        factors << { factor: "cdn", weight: 1, note: "#{environment.cdn} masks the origin; direct-to-origin may bypass edge rules" }
+        factors << { factor: "cdn", weight: 1,
+                     note: I18n.t("data.risk.friction.cdn",
+                                  default: "%{cdn} masks the origin; direct-to-origin may bypass edge rules",
+                                  cdn: environment.cdn) }
       end
       if environment.sapi.to_s.start_with?("php-fpm")
-        factors << { factor: "sapi", weight: 1, note: "FPM requires both exploit requests on the same worker" }
+        factors << { factor: "sapi", weight: 1,
+                     note: I18n.t("data.risk.friction.sapi",
+                                  default: "FPM requires both exploit requests on the same worker") }
       end
       if verdict.access&.state == :auth_wall
-        factors << { factor: "auth", weight: 4, note: "authentication wall limits reachable paths" }
+        factors << { factor: "auth", weight: 4,
+                     note: I18n.t("data.risk.friction.auth",
+                                  default: "authentication wall limits reachable paths") }
       end
       if verdict.access&.state == :rate_limited
-        factors << { factor: "rate_limit", weight: 3, note: "rate limiting slows or blocks request sequences" }
+        factors << { factor: "rate_limit", weight: 3,
+                     note: I18n.t("data.risk.friction.rate_limit",
+                                  default: "rate limiting slows or blocks request sequences") }
       end
       if verdict.access&.state == :blocked
-        factors << { factor: "edge_block", weight: 5, note: "edge denied every probe; no application-level evidence" }
+        factors << { factor: "edge_block", weight: 5,
+                     note: I18n.t("data.risk.friction.edge_block",
+                                  default: "edge denied every probe; no application-level evidence") }
       end
       if verdict.access&.state == :soft_404
-        factors << { factor: "soft_404", weight: 2, note: "catch-all routing makes path-based evidence unreliable" }
+        factors << { factor: "soft_404", weight: 2,
+                     note: I18n.t("data.risk.friction.soft_404",
+                                  default: "catch-all routing makes path-based evidence unreliable") }
       end
 
       total = factors.sum { |f| f[:weight] }

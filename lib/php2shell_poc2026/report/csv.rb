@@ -12,7 +12,8 @@ module PHP2ShellPOC2026
       COLUMNS = %w[
         target url verdict status reason_code risk_score risk_grade confidence
         version branch fix_floor access_state http_status server edge cdn waf sapi
-        framework requests coverage_usable coverage_attempted error
+        framework requests coverage_usable coverage_attempted hackable answer
+        decision_action error
       ].freeze
 
       def self.render(results, _options, summary: nil, meta: {})
@@ -44,6 +45,9 @@ module PHP2ShellPOC2026
             result.meta[:requests] || result.fingerprint[:requests],
             coverage[:usable],
             coverage[:attempted],
+            result.hackability.hackable?,
+            result.hackability.answer,
+            result.hackability.action,
             result.error
           ]
           lines << row.map { |value| Sanitize.csv(value) }.join(",")
