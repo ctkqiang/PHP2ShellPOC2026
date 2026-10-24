@@ -54,13 +54,31 @@ module PHP2ShellPOC2026
     def self.wrap_hanging(prefix, text, hang = nil)
       hang = prefix.length if hang.nil?
       w    = width
-      cont = [w - hang, 8].max
+      # A hanging indent is a readability device, not a copy of the prefix.
+      # Tool names and labels can be longer than half the terminal; using the
+      # full prefix length would leave a one-word column and hard-split words.
+      hang = [[hang, w / 2].min, 16].min
+      indent = " " * hang
 
-      lines = greedy_hanging(prefix, text, w, cont)
-      lines.each_with_index.flat_map do |line, i|
-        limit = i.zero? ? w : cont
-        line.length <= limit ? [line] : chunk(line, cont)
+      lines = []
+      current = prefix.dup
+      text.to_s.split(" ").each do |word|
+        # `current` already contains the continuation indent, so the limit
+        # is the full terminal width. Subtracting `hang` here as well would
+        # count the indent twice and collapse narrow continuations to one
+        # word per line.
+        separator = current.end_with?(" ") ? 0 : 1
+        if current.length + separator + word.length <= w
+          current << " " unless current.end_with?(" ")
+          current << word
+        else
+          lines << current
+          current = indent.dup
+          current << word
+        end
       end
+      lines << current
+      lines.flat_map { |line| line.length <= w ? [line] : chunk(line, w) }
     end
 
     def self.truncate(text, limit)
@@ -146,12 +164,15 @@ module PHP2ShellPOC2026
     end
 
     def self.chunk(line, limit)
-      line.scan(/.{1,#{limit}}/)
+      line.each_char.each_slice(limit).map(&:join)
     end
 
     def self.shrink(naturals, usable)
       widths = naturals.dup
-      floor  = [widths[0], 8].min
+      # A target truncated to eight characters is not an identifier any
+      # more. Keep at least 24 columns when the URL is long enough to need
+      # them; below that, stack the row instead of printing a useless stub.
+      floor  = [widths[0], 24].min
 
       loop do
         total = widths.sum + TABLE_GAP * (widths.length - 1)

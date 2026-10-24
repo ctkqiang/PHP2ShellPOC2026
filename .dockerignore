@@ -1,0 +1,7 @@
+.git
+.gitignore
+.github
+test
+vendor
+*.gem
+.DS_Store

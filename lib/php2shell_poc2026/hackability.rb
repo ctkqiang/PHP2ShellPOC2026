@@ -1,67 +1,70 @@
 # frozen_string_literal: true
 
 module PHP2ShellPOC2026
-  # Evidence weighing for the question people actually ask at the bottom of
-  # a report: is this host hackable *by this bug class*, and how much of that
-  # answer is backed by signals we observed rather than assumed?
+  # Evidence weighing for the question people ask at the bottom of a report:
+  # is this host exploitable by this bug class, and how much of that answer
+  # is backed by observed signals?
   #
-  # Every observed fact contributes a signed weight. The positivity ratio is
-  # positive / (positive + negative) — 1.0 means every signal points at
-  # exploitability, 0.0 means none do — and the rating falls out of that
-  # ratio. Two clamps keep the number honest: a host with no PHP behaviour
-  # observed can never rate above NOT HACKABLE, and an unconfirmed
-  # fingerprint can never rate above LIKELY, however many supporting signals
-  # pile up, because "we could not read the version" is not evidence of
-  # exposure.
-  #
-  # Risk and hackability answer different questions on purpose. Risk scores
-  # severity of the exposure (an EOL interpreter behind a CDN is still a 10);
-  # hackability scores how confidently the evidence supports exploiting *this
-  # host* right now. A CRITICAL risk can legitimately print LIKELY HACKABLE
-  # when the edge is hiding the origin.
+  # The 3.0 model separates *exposure* (is the interpreter vulnerable?) from
+  # *friction* (what would an attacker have to beat?). A WAF is not evidence
+  # that PHP is patched, and a 403 is not evidence that PHP is absent. When
+  # there is no positive or negative evidence at all, the ratio is nil and
+  # the rating is INCONCLUSIVE — not "0.00, therefore safe".
   module Hackability
-    Signal = Struct.new(:direction, :weight, :label, keyword_init: true)
+    Signal = Struct.new(:direction, :weight, :kind, :label, keyword_init: true) do
+      def to_h
+        { direction: direction, weight: weight, kind: kind, label: label }
+      end
+    end
 
     Result = Struct.new(
-      :rating, :label, :ratio, :positive, :negative,
-      :prerequisites, :reliability, :impact, :signals,
+      :rating, :label, :ratio, :positive, :negative, :neutral,
+      :confidence, :coverage, :prerequisites, :reliability, :impact,
+      :signals, :friction,
       keyword_init: true
     ) do
       def hackable?
-        rating == :hackable || rating == :likely
+        return true if rating == :exposed || rating == :likely
+        return false if rating == :not_exposed
+
+        nil
       end
 
       def to_h
         {
-          rating:         rating,
-          label:          label,
-          ratio:          ratio,
-          positive:       positive,
-          negative:       negative,
-          hackable:       hackable?,
-          prerequisites:  prerequisites,
-          reliability:    reliability,
-          impact:         impact,
-          signals:        signals.map(&:to_h)
+          rating: rating,
+          label: label,
+          ratio: ratio,
+          positive: positive,
+          negative: negative,
+          neutral: neutral,
+          hackable: hackable?,
+          confidence: confidence,
+          coverage: coverage,
+          prerequisites: prerequisites,
+          reliability: reliability,
+          impact: impact,
+          friction: friction,
+          signals: signals.map(&:to_h)
         }
       end
     end
 
     RATINGS = {
-      hackable:     "HACKABLE",
-      likely:       "LIKELY HACKABLE",
-      uncertain:    "INCONCLUSIVE",
-      not_hackable: "NOT HACKABLE"
+      exposed: "EXPOSED",
+      likely: "LIKELY EXPOSED",
+      inconclusive: "INCONCLUSIVE",
+      not_exposed: "NOT EXPOSED"
     }.freeze
 
-    def self.assess(verdict, environment)
-      surface  = verdict.attack_surface
-      signals  = build_signals(verdict, environment, surface)
+    def self.assess(verdict, environment, risk, coverage: {})
+      signals  = build_signals(verdict, environment)
       positive = signals.select { |s| s.direction == :positive }.sum(&:weight)
       negative = signals.select { |s| s.direction == :negative }.sum(&:weight)
+      neutral  = signals.select { |s| s.direction == :neutral }.sum(&:weight)
       total    = positive + negative
-      ratio    = total.zero? ? 0.0 : (positive.to_f / total).round(2)
-      rating   = rate(ratio, verdict, surface)
+      ratio    = total.zero? ? nil : (positive.to_f / total).round(2)
+      rating   = rate(ratio, verdict)
 
       Result.new(
         rating:        rating,
@@ -69,96 +72,96 @@ module PHP2ShellPOC2026
         ratio:         ratio,
         positive:      positive,
         negative:      negative,
-        prerequisites: prerequisites(verdict, environment, surface),
+        neutral:       neutral,
+        confidence:    verdict.confidence,
+        coverage:      coverage,
+        prerequisites: prerequisites(verdict, environment),
         reliability:   reliability(verdict, environment),
         impact:        impact(verdict),
-        signals:       signals
+        signals:       signals,
+        friction:      risk[:friction]
       )
     end
 
-    def self.rate(ratio, verdict, surface)
-      rating =
-        if !surface[:php_detected]           then :not_hackable
-        elsif ratio >= 0.75                  then :hackable
-        elsif ratio >= 0.50                  then :likely
-        elsif ratio >= 0.25                  then :uncertain
-        else                                      :not_hackable
-        end
+    def self.rate(ratio, verdict)
+      return :not_exposed if verdict.patched? || verdict.no_php?
+      return :inconclusive if verdict.unverified?
+      return :inconclusive unless ratio
 
-      # An unreadable version caps the ceiling, never raises it: unknown
-      # means exactly that, and the report should not sound confident on
-      # the back of an absence.
-      rating == :hackable && verdict.status == :unknown ? :likely : rating
+      if ratio >= 0.6
+        :exposed
+      else
+        :likely
+      end
     end
 
-    def self.build_signals(verdict, environment, surface)
+    def self.build_signals(verdict, environment)
       signals = []
 
       case verdict.status
       when :vulnerable
-        signals << positive_signal(4, "interpreter #{verdict.version} sits below its branch fix level")
+        signals << positive(4, :exposure, "interpreter #{verdict.version} sits below the #{verdict.branch} fix level (#{verdict.fix_floor})")
       when :eol
-        signals << positive_signal(5, "branch #{branch_of(verdict)} is end-of-life — no upstream fix exists")
-      when :unknown
-        signals << negative_signal(3, "no version fingerprint — exposure unconfirmed")
+        signals << positive(5, :exposure, "branch #{verdict.branch} is end-of-life — no upstream fix exists")
       when :patched
-        signals << negative_signal(6, "meets the fix level (#{verdict.version}) — parser-level exploit closed")
+        signals << negative(6, :exposure, "interpreter #{verdict.version} meets the fix level (#{verdict.fix_floor})")
+      when :no_php
+        signals << negative(4, :exposure, "no PHP markers on the reachable paths; control path behaved normally")
+      when :unknown
+        signals << neutral(0, :evidence, "PHP is present but the version was not exposed")
+      when :inconclusive
+        signals << neutral(0, :evidence, "no usable application evidence — #{verdict.reason_code}")
       end
 
-      unless surface[:php_detected]
-        signals << negative_signal(3, "no PHP behaviour observed on probed paths")
-        return signals
+      surface = verdict.attack_surface
+
+      if verdict.exposed? || verdict.status == :unknown
+        signals << positive(1, :surface, "PHP behaviour observed") if surface[:php_detected]
+        signals << positive(2, :surface, "PHPSESSID issued — upload-progress path reachable") if surface[:upload_progress]
+        signals << positive(1, :surface, "phpinfo() publicly readable") if surface[:phpinfo_exposed]
+        signals << positive(1, :surface, "verbose PHP error text in responses") if surface[:php_errors]
+        signals << positive(1, :surface, "live .php route confirmed against a 404 control") if surface[:php_paths_live]
+        signals << positive(1, :surface, "PHP framework detected: #{surface[:framework]}") if surface[:framework]
       end
 
-      # Environment and surface signals only speak to hackability when the
-      # interpreter is actually in play — a patched host does not become
-      # more exploitable because no WAF was seen.
-      if verdict.status != :patched
-        signals << positive_signal(2, "fires pre-authentication — parser runs before any application code")
-        signals << positive_signal(2, "PHPSESSID issued — CVE-2026-109619 upload-progress path reachable") if surface[:upload_progress]
-        signals << positive_signal(1, "phpinfo() publicly readable — interpreter confirmed executing") if surface[:phpinfo_exposed]
-        signals << positive_signal(1, "verbose PHP error text in responses") if surface[:php_errors]
-        signals << positive_signal(1, "live .php entry points return 2xx/3xx")
-        signals << positive_signal(2, "no WAF fingerprint observed — no edge rule in the way") unless environment.waf
-        signals << positive_signal(1, "no CDN — requests reach the origin directly") unless environment.cdn?
-
-        if environment.sapi.start_with?("mod_php")
-          signals << positive_signal(2, "mod_php posture — one process per request, exploitation is one-shot")
-        end
+      if verdict.exposed?
+        signals << positive(2, :exposure, "fires before authentication — the parser runs before application code")
+        signals << neutral(0, :friction, "WAF (#{environment.waf}) in front") if environment.waf
+        signals << neutral(0, :friction, "CDN (#{environment.cdn}) masks the origin") if environment.cdn?
+        signals << neutral(0, :friction, "php-fpm posture — same-worker request pairing required") if environment.sapi.to_s.start_with?("php-fpm")
       end
 
-      signals << negative_signal(1, "behind #{environment.cdn} — origin may run different PHP; the edge masks the truth") if environment.cdn?
-      signals << negative_signal(2, "WAF (#{environment.waf}) in front — crafted bodies may be blocked") if environment.waf
-
-      if environment.sapi.start_with?("php-fpm") && verdict.exposed?
-        signals << negative_signal(1, "php-fpm posture — both exploit requests must land on the same worker")
-      end
+      signals << neutral(0, :evidence, "edge denied every probe (HTTP #{verdict.access&.details&.dig(:statuses)&.join('/') || '4xx'})") if verdict.access&.blocked?
+      signals << neutral(0, :evidence, "catch-all 200 responses — path evidence unreliable") if verdict.access&.state == :soft_404
+      signals << neutral(0, :evidence, "version reported at branch level only — patch level unknown") if verdict.reason_code == :branch_only
 
       signals
     end
 
-    def self.prerequisites(verdict, environment, surface)
-      prereqs = ["TCP reachability to the web port — no credentials, session or user interaction"]
-
+    def self.prerequisites(verdict, environment)
       if verdict.exposed?
-        prereqs << if surface[:upload_progress]
+        prereqs = ["TCP reachability to the web port — no credentials, session or user interaction"]
+        prereqs << if verdict.attack_surface[:upload_progress]
                      "multipart POST accepted with PHP_SESSION_UPLOAD_PROGRESS + PHPSESSID (CVE-2026-109619 arm)"
                    else
                      "upload-progress acceptance unconfirmed — the CVE-2026-109618 (OOM) arm needs no special request fields"
                    end
-        prereqs << "both crafted requests must land on the same FPM worker" if environment.sapi.start_with?("php-fpm")
+        prereqs << "both crafted requests must land on the same FPM worker" if environment.sapi.to_s.start_with?("php-fpm")
         prereqs << "any live .php route — no specific path, permission or session required"
-      elsif verdict.status == :unknown
-        prereqs << "confirm the interpreter version first (--deep, or a host-side read) before committing effort"
+        prereqs
+      elsif verdict.patched?
+        ["none — this bug class is closed at the interpreter fix level"]
+      elsif verdict.no_php?
+        ["a PHP endpoint outside the probed paths — this finding covers the routes that were actually tested"]
       else
-        prereqs << "none applicable — this bug class is closed at the interpreter fix level"
+        ["a usable application response or a host-side version read before exposure can be assessed"]
       end
-
-      prereqs
     end
 
     def self.reliability(verdict, environment)
-      return "closed — interpreter meets the fix level; nothing to assess" if verdict.status == :patched
+      return "closed — interpreter meets the fix level; nothing to assess" if verdict.patched?
+      return "not applicable — no PHP surface observed on the probed paths" if verdict.no_php?
+      return "undetermined — no usable application response; measure from an approved vantage point" if verdict.unverified?
 
       sapi = environment.sapi.to_s
 
@@ -174,24 +177,26 @@ module PHP2ShellPOC2026
     def self.impact(verdict)
       if verdict.exposed?
         "code execution as the web worker UID (T1059.004) with webshell persistence (T1505.003); " \
-        "or silent memory disclosure of env vars, keys and session material (T1005) with no crash"
-      elsif verdict.status == :patched
+          "or silent memory disclosure of env vars, keys and session material (T1005) with no crash"
+      elsif verdict.patched?
         "parser-level exploitation closed at the fix level — residual risk is application bugs and misconfiguration"
+      elsif verdict.no_php?
+        "not applicable to the probed routes — this bug class requires a PHP interpreter"
       else
         "undetermined — impact cannot be assigned until the interpreter version is confirmed"
       end
     end
 
-    def self.branch_of(verdict)
-      verdict.version && verdict.version.segments[0, 2].join(".")
+    def self.positive(weight, kind, label)
+      Signal.new(direction: :positive, weight: weight, kind: kind, label: label)
     end
 
-    def self.positive_signal(weight, label)
-      Signal.new(direction: :positive, weight: weight, label: label)
+    def self.negative(weight, kind, label)
+      Signal.new(direction: :negative, weight: weight, kind: kind, label: label)
     end
 
-    def self.negative_signal(weight, label)
-      Signal.new(direction: :negative, weight: weight, label: label)
+    def self.neutral(weight, kind, label)
+      Signal.new(direction: :neutral, weight: weight, kind: kind, label: label)
     end
   end
 end

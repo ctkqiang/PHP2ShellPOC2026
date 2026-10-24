@@ -1,549 +1,506 @@
 # PHP2ShellPOC2026
 
-A passive exposure analyzer for the PHP2Shell bug class (CVE-2026-109618 and
-CVE-2026-109619). Point it at a URL and it tells you, in one screen: which PHP
-interpreter is running behind that endpoint, whether that interpreter is past
-the fix level for its branch, how the deployment (SAPI, CDN, WAF) changes what
-an attacker could realistically do with it, which MITRE ATT&CK techniques the
-finding maps to, and what a blue team should be detecting right now.
+Passive exposure triage for the **PHP2Shell** bug class (CVE-2026-109618 and
+CVE-2026-109619). Point it at a web endpoint and it answers four questions in
+one report:
 
-It never sends anything more aggressive than an ordinary GET request. There is
-no exploit code, no payload, no fuzzing, and no state-changing verb anywhere in
-the codebase — by design, not by configuration.
+1. **What is actually answering?** PHP version, SAPI, edge, CDN, WAF, framework.
+2. **Is the interpreter exposed?** Below the branch fix level, end-of-life,
+   patched, or genuinely unverified.
+3. **How much does the deployment change the picture?** Exposure severity is
+   reported separately from exploit friction.
+4. **What should happen next?** ATT&CK mapping, detection opportunities,
+   remediation, and copy-pasteable next actions.
 
----
+It sends ordinary `GET` requests. There is no exploit code, no payload, no
+fuzzing and no state-changing verb anywhere in the codebase.
 
-## Table of contents
-
-- [The problem it solves](#the-problem-it-solves)
-- [Who runs this](#who-runs-this)
-- [How it works, stage by stage](#how-it-works-stage-by-stage)
-- [The four verdicts](#the-four-verdicts)
-- [How the risk score is built](#how-the-risk-score-is-built)
-- [Is it hackable? Evidence weighting](#is-it-hackable-evidence-weighting)
-- [The attack surface flags](#the-attack-surface-flags)
-- [ATT&CK mapping](#attck-mapping)
-- [Detection opportunities for the blue team](#detection-opportunities-for-the-blue-team)
-- [The red team perspective and toolchain](#the-red-team-perspective-and-toolchain)
-- [Installing and running](#installing-and-running)
-- [Command-line flags](#command-line-flags)
-- [Exit codes](#exit-codes)
-- [Output formats](#output-formats)
-- [Safety properties](#safety-properties)
-- [Project structure](#project-structure)
-- [Diagrams](#diagrams)
-- [Extending the tool](#extending-the-tool)
-- [Contributing](#contributing)
-- [License and disclaimer](#license-and-disclaimer)
+> **Authorized use only.** This is a triage tool, not a permission slip.
+> Confirm the program scope, rules of engagement and rate limits before you
+> point it at anything. `--scope` and `--require-scope` exist to make that
+> boundary enforceable, not decorative. See [docs/AUTHORIZED-USE.md](docs/AUTHORIZED-USE.md).
 
 ---
 
-## The problem it solves
+## Why 3.0 exists
 
-PHP2Shell is a pair of flaws in PHP's own request handling — CVE-2026-109618
-and CVE-2026-109619. Both fire while the request is being parsed, which is
-before a single line of your application code runs. That has two consequences
-people consistently underestimate:
+The 2.x model had a dangerous failure mode: a host that returned `403` to
+every request was reported as **not hackable**, with a `0.00` evidence ratio.
+That is not what a `403` means. It means the scanner could not see the
+application. Absence of evidence was being sold as evidence of absence.
 
-**Application-layer defence does not apply.** Authentication, SSO, IAM,
-authorisation middleware — none of it has executed yet when the parser hits
-the malformed input. An endpoint that requires no login is not "less exposed"
-here; every `.php` route on the host is an equally valid entry point.
+3.0 changes the questions the tool asks:
 
-**The blast radius is the interpreter, not the app.** The two variants of the
-bug resolve either to code execution as the web worker (`www-data`, `apache`,
-`nginx`) or to a Heartbleed-style memory disclosure that leaks environment
-variables, cloud credentials and session material without achieving execution
-at all. A "successful" attack does not have to crash anything, which means
-availability monitoring will not reliably catch the probing phase.
+- A random **canary path** is fetched alongside the root. If the canary is
+  denied too, the result is `BLOCKED` / `INCONCLUSIVE`, not "clean".
+- Catch-all routing is detected as **soft-404**; path status codes stop being
+  trusted.
+- A login redirect is an **auth wall**, not a patched interpreter.
+- A `429` is **rate limiting**, not absence.
+- Version evidence is separated from **access evidence**. A `403` page that
+  leaks `X-Powered-By` still reports the version, with low confidence and an
+  explicit caveat.
+- **Exposure severity** (`9.8` for a vulnerable interpreter) is separate from
+  **exploit friction** (WAF, CDN, FPM worker affinity, auth wall). A WAF does
+  not make an unpatched parser less unpatched.
+- When there is no positive or negative evidence, the evidence ratio is
+  `null`, not `0.00`.
+- Reports are available as text, JSON, Markdown, SARIF, CSV and NDJSON.
+- Offensive tooling recommendations are gated behind `--authorized`.
+- `--dry-run` prints the exact request plan without opening a socket.
+- `--scope` / `--require-scope` fail closed with exit code `4`.
 
-Compounding this: the fix landed per branch at 8.2.35, 8.3.36, 8.4.27 and
-8.5.12. Anything below branch 8.2 — all of 5.x, 7.x, and 8.1 — is end-of-life
-and never received a fix at all. Those hosts can only be cleared by a
-distro backport someone has actually confirmed is applied, or by an upgrade.
+---
 
-Nobody advertises `X-Powered-By: PHP/8.1.2` and thinks about what that string
-means to an attacker. This tool reads the same signals an attacker would, then
-turns them into a verdict, a score, a kill chain, a set of detections — and,
-at the bottom of the report, an evidence-weighted **hackable / not-hackable**
-rating with the positivity ratio behind it.
+## Install
 
-## Who runs this
+### RubyGems
 
-**Blue team / defenders** use it to find out which hosts in the estate are
-actually running a vulnerable interpreter, and to pull the detection
-opportunities that apply to the specific deployment found — the report names
-concrete WAF rules, log greps and EDR alerts, not generic advice.
+```sh
+gem install php2shell_poc2026
+php2shell --version
+php2shell-poc2026 --version   # long alias, same CLI
+```
 
-**Purple team** uses the ATT&CK mapping and detection layers together: the
-attack chain says what an adversary would do, the detections say where to
-observe it, and the two are keyed to the same finding so they line up.
+### From a checkout
 
-**Red team / authorized testers** use it as a scoping step. Before deciding
-which of the standard tools in the catalogue are worth running against a host,
-you want to know whether the interpreter is even vulnerable, whether the
-session-upload path is reachable, and whether a WAF is sitting in front —
-all of which this establishes passively.
+```sh
+git clone https://github.com/ctkqiang/PHP2ShellPOC2026.git
+cd PHP2ShellPOC2026
+./install.sh            # system gem
+./install.sh --user     # user gem directory
+```
 
-**Engineering / DevSecOps** run it in CI or on a schedule against production
-endpoints as a regression check: an interpreter downgrade or a forgotten
-staging box shows up as a non-zero exit code.
+The gem has **no runtime dependencies**. Ruby `>= 2.7` and RubyGems are enough.
 
-## How it works, stage by stage
+### Docker
 
-The scanner runs one pass per target, in this order:
+```sh
+docker build -t php2shell-poc2026 .
+docker run --rm php2shell-poc2026 --version
+docker run --rm php2shell-poc2026 --dry-run https://example.com/
+```
 
-**1. Normalisation.** The target string becomes a URI. A bare hostname gets
-`https://` assumed; anything that is not an HTTP(S) URL after parsing is
-rejected. Empty paths become `/`.
+The image runs as an unprivileged user and only needs outbound HTTP(S).
 
-**2. Passive probing.** One GET request to the root, with an honest
-`User-Agent` identifying the tool, a configurable timeout (10 seconds by
-default), full TLS verification (unless you pass `--insecure`), and redirects
-followed up to five hops. With `--deep` it also probes `/index.php` and the
-usual phpinfo locations (`/phpinfo.php`, `/info.php`, `/test.php`, `/i.php`,
-`/php.php`) — worthwhile when the root gives you nothing to work with.
+---
 
-If a request fails — refused, timed out, bad certificate — that probe is
-recorded as unusable and the scan continues. A dead path degrades the verdict
-towards `unknown`; it never aborts a run against a host you can otherwise
-reach.
+## Quick start
 
-**3. Evidence extraction.** Each usable response is kept whole (headers,
-status, body) and interrogated for four signals: the PHP version advertised in
-`X-Powered-By`, an exposed phpinfo page that states the version outright, a
-`PHPSESSID` cookie proving the session-upload-progress machinery is live, and
-PHP's own error-page wording. The version is taken from the first signal that
-produces an exact number — `X-Powered-By` first because it is precise,
-phpinfo second because it is authoritative but rarer. Nothing is guessed from
-response timings or page styling; the false-positive rate is not worth it.
+```sh
+# Passive: root + one text canary, no .php probing
+php2shell --profile passive https://example.com/
 
-**4. Deployment fingerprinting.** From response headers alone, the tool
-identifies the CDN (CloudFront, Cloudflare, Fastly, Akamai), the WAF
-(Cloudflare, Sucuri, Imperva/Incapsula), and — most importantly — the likely
-SAPI. The SAPI decides exploit reliability: mod_php gives one request one
-process with no recycle between victims, so exploitation is close to
-one-shot; PHP-FPM makes an attacker land both requests on the same worker,
-which is materially harder. nginx or an `X-Fastcgi-Cache` header reads as
-FPM-likely; Apache with no CDN in front reads as mod_php-likely, the
-highest-risk posture per the PHP project. Every SAPI call comes with a
-written rationale so a human reading the report can judge the inference.
+# Standard: root, text/php canaries, /index.php, framework paths if detected
+php2shell https://example.com/
 
-**5. Classification.** The extracted version is compared against the fix
-level for its branch (see [The four verdicts](#the-four-verdicts) below).
-Branches with no published fix are EOL before any comparison happens —
-telling someone on 7.4 to upgrade to 8.2.35 is technically true and
-practically useless.
+# Deep: common PHP paths, framework paths, robots.txt and sitemap.xml discovery
+php2shell -d -r -c -v https://example.com/
 
-**6. Risk weighting.** The verdict produces a base score, which the
-deployment then adjusts — SAPI up or down, a CDN taking a point off. Full
-method below.
+# Machine-readable report
+php2shell --json https://example.com/ > report.json
 
-**7. Evidence weighing.** Every observed fact — the fingerprint source, the
-session cookie, the absence of a WAF, the SAPI posture — becomes a signed
-signal that either supports or undermines exploiting this specific host. The
-signals are totalled into a positivity ratio and a hackable / not-hackable
-rating, which anchor the technical summary at the bottom of the report. Full
-method below.
+# Plan first; no socket is opened
+php2shell --dry-run --profile deep https://example.com/
+```
 
-**8. Enrichment.** The finding is passed to four independent modules: the
-ATT&CK mapper (kill chain), the detection builder (blue-team layers), the
-red-team notes (attacker's-eye paragraphs for this host), and the toolchain
-catalogue (the standard kit list, phase by phase, with an extra
-origin-discovery entry added automatically when a CDN is detected).
+The default text report is a dashboard: a findings table, a one-line bottom
+line, one assessment card per target, an evidence table, compact ATT&CK and
+detection sections, and numbered next actions. `-v` expands full ATT&CK notes,
+detection detail and technical signals; `-c` adds the toolchain; `-r` adds
+red-team notes. `--quiet` keeps only the findings table, bottom line and run
+summary.
 
-**9. Rendering.** The run opens with the summary table, then text to the
-terminal — optionally including the red-team notes, the toolchain and a
-request-by-request trace with `--verbose` — or complete JSON with `--json`.
-Every text block closes with the technical summary and remediation steps,
-and the run closes with the cross-target run summary and a usage tip, then
-the exit code. All text sizing to the terminal; see Output formats.
+---
 
-## The four verdicts
+## How it works
 
-| Verdict | Meaning | Counts as exposed? |
+### 1. Scope and target normalisation
+
+Every target is parsed once into a `Target` object. Bare hostnames become
+`https://…/`; IDNs are Punycoded for the wire; IPv6 literals are bracketed;
+credentials in URLs are rejected (use `--basic-auth` or `--bearer`). Scope is
+checked **before** the first socket is opened.
+
+### 2. Root + control probes
+
+The scanner fetches the root, then one or two random canary paths such as
+`/php2shell-<8hex>.txt` and `/php2shell-<8hex>.php`. The canary is the key
+methodological change:
+
+| Root | Canary | Classification |
 |---|---|---|
-| `patched` | Version is at or above the fix floor for its branch (8.2.35 / 8.3.36 / 8.4.27 / 8.5.12). | No |
-| `vulnerable` | Version is below its branch's fix floor. The report says which floor it missed. | Yes |
-| `eol` | Version is on a branch that never received a fix (5.x, 7.x, 8.1). Only backports or an upgrade clear it. | Yes |
-| `unknown` | No version fingerprint exposed. The report tells you to try `--deep` or read the version off the host directly. | No |
+| `403` | `403` | **blocked** — the edge denied the scanner |
+| `403` | `404` | **restricted** — path-level access control |
+| `200` | `200`, same body | **soft-404** — catch-all routing |
+| `302` to login | anything | **auth wall** |
+| `429` | anything | **rate limited** |
+| `5xx` | anything | **server error** |
+| error | error | **unreachable** |
+| `200` | `404` | **open** — path statuses are usable |
 
-`eol` counting as exposed is deliberate: "no fix exists" is a worse answer
-than "below the fix level", not a better one.
+Adaptive mode stops after the controls for blocked, auth-wall, rate-limited,
+soft-404, server-error and unreachable results. `--no-adaptive` forces the
+full probe set when you have a reason to.
 
-Alongside the verdict, the report prints four attack-surface flags — see
-[below](#the-attack-surface-flags) — which say how reachable the relevant
-paths are, independently of which version is running.
+### 3. Version evidence
 
-## How the risk score is built
+Version is read from, in order:
 
-The score is CVSS-shaped but is not a CVSS vector, and it should not be
-compared against a vendor's official score for this CVE. It starts from the
-verdict and moves for what the deployment does with the bug:
+- `X-Powered-By`, `Server` and any header carrying `PHP/<version>`.
+- `phpinfo()` pages, including `<title>phpinfo()</title>` and `PHP Version`.
+- Framework metadata (WordPress/Drupal/Joomla) is recorded as **framework**
+  version context, never as the PHP patch level.
 
-- **Base:** `vulnerable` = 9.8, `eol` = 10.0, `unknown` = 4.0, `patched` = 0.0.
-- **SAPI:** +0.2 for mod_php-likely (capped at 10.0) because exploitation is
-  near one-shot reliable; −1.0 for FPM-likely on a vulnerable host because
-  same-worker request pairing is a real friction the attacker must beat.
-- **CDN:** −1.0 on any non-patched finding, on the reasoning that edge
-  controls usually absorb naive probing. The origin-bypass caveat is printed
-  alongside every time — the point is recoverable by finding the origin, and
-  the report says so.
-- The result is rounded to one decimal and clamped to 0.0–10.0, then graded:
-  9.0+ CRITICAL, 7.0+ HIGH, 4.0+ MEDIUM, above zero LOW, zero NONE.
+A branch-only value such as `8.2` is reported as `UNVERIFIED` / `branch_only`,
+not silently upgraded to a patch-level claim. A version observed on a blocked
+or error response is reported with low confidence and a caveat.
 
-## Is it hackable? Evidence weighting
+### 4. Verdicts
 
-Every text run ends with a **technical summary** that answers the question a
-report exists to answer — *can this host be hacked by this bug class, and how
-confident are we* — and every multi-target run ends with a **run summary**
-giving the positivity ratio across the whole batch.
+| Status | Meaning | Exposed? |
+|---|---|---|
+| `vulnerable` | Version is below the branch fix level | yes |
+| `eol` | Branch has no upstream fix (5.x, 7.x, 8.0, 8.1) | yes |
+| `patched` | At or above the branch fix level | no |
+| `unknown` | PHP observed, version not established | unverified |
+| `no_php` | No PHP markers on reachable paths; control behaved normally | no (scoped) |
+| `inconclusive` | Blocked, auth wall, soft-404, rate limit, 5xx or unreachable | unverified |
 
-The **positivity ratio** is `positive / (positive + negative)`, computed from
-the signed weight of every observed signal. Signals are printed with their
-weights so the arithmetic is auditable rather than mysterious:
+Fix floors used by this release:
 
-- **Positive signals** push towards exploitability: an interpreter below its
-  fix level (+4) or on an EOL branch (+5), the pre-authentication nature of
-  the bug (+2), a live `PHPSESSID` proving the CVE-2026-109619 path is
-  reachable (+2), no WAF observed (+2), a mod_php posture (+2), phpinfo
-  exposure, verbose PHP errors, live `.php` entry points (+1 each), no CDN
-  in front (+1).
-- **Negative signals** push against it: the interpreter meets the fix
-  level (−6), no PHP behaviour observed at all (−3), no version
-  fingerprint — exposure unconfirmed (−3), a WAF in front (−2), a CDN
-  masking the origin (−1), a FPM posture forcing same-worker request
-  pairing (−1).
-
-The ratio maps to a rating: **≥ 0.75 → HACKABLE**, **≥ 0.50 → LIKELY
-HACKABLE**, **≥ 0.25 → INCONCLUSIVE**, below that **NOT HACKABLE**. Two
-clamps keep the number honest: a host showing no PHP behaviour can never
-rate above NOT HACKABLE, and an unconfirmed fingerprint can never rate above
-LIKELY — an absence of evidence is not evidence of exposure, however many
-peripheral signals accumulate.
-
-The summary then states the **prerequisites** (what an attacker needs —
-always unauthenticated TCP reachability for this class, plus the
-upload-progress arm or same-worker pairing where relevant), the
-**reliability** of exploitation for this deployment (mod_php is one-shot,
-FPM needs retries, unknown SAPI means measure first), and the **impact**
-if it is won — RCE as the web worker with webshell persistence, or silent
-memory disclosure with no crash.
-
-Risk and hackability deliberately answer different questions. Risk scores
-how severe the exposure is (an EOL interpreter behind a CDN still scores
-10.0); hackability scores how confidently the evidence supports exploiting
-*this host, now*. A CRITICAL risk next to LIKELY HACKABLE is a coherent
-result: severe if true, edge still hiding part of the picture.
-
-## The attack surface flags
-
-These four booleans are what the rest of the report hangs its claims on, and
-each is a sentence someone can verify by hand against the host:
-
-- **`php`** — PHP was positively detected on this endpoint at all (version
-  header, session cookie, error page, phpinfo, or a `.php` path returning 2xx/3xx).
-- **`upload_progress`** — a `PHPSESSID` cookie was issued, meaning the
-  session upload-progress machinery behind CVE-2026-109619 is reachable here.
-  This is the difference between "the interpreter is old" and "this specific
-  path works".
-- **`phpinfo`** — a phpinfo page is publicly readable. Attackers love these;
-  the report flags it as surface, not just quietly using it for version
-  extraction.
-- **`php_errors`** — PHP's own error text leaked into a response body, which
-  usually means verbose errors are on in production.
-
-## ATT&CK mapping
-
-When a host classifies as `vulnerable` or `eol`, the report prints a kill
-chain built from techniques that genuinely apply to this bug class:
-
-- **T1190 — Exploit Public-Facing Application (Initial Access):** one crafted
-  request reaches the parser before any application code runs.
-- **T1059.004 — Unix Shell (Execution):** confirmed exploit paths run
-  commands as the web worker UID.
-- **T1505.003 — Web Shell (Persistence):** a long-lived worker makes a
-  webshell drop trivial, and successful execution need not restart the worker.
-- **T1005 — Data from Local System (Collection):** the disclosure variant
-  leaks process memory without achieving execution.
-- **T1082 — System Information Discovery (Discovery):** recon through the
-  hijacked interpreter looks like ordinary app traffic without EDR.
-- **T1071.001 — Web Protocols (Command and Control):** C2 and exfil blend
-  into normal HTTPS egress from the web tier.
-
-On a patched or unknown host the chain is intentionally empty — there is no
-confirmed exposure to map, and printing a kill chain anyway would train people
-to ignore it.
-
-## Detection opportunities for the blue team
-
-The detection section is built per finding and ordered outermost-first, the
-order traffic actually meets the controls:
-
-1. **WAF** — rules for both arms of the bug: block
-   `PHP_SESSION_UPLOAD_PROGRESS` in POST bodies (AWS WAF PHP Managed Rule
-   Group v2.3+ covers this; ModSecurity inspects multipart bodies), and
-   shrink the OOM surface with decoded body-size, part-count, field-count and
-   nesting-depth limits.
-2. **PHP logs** — grep FPM/Apache logs for memory exhaustion that happens
-   *before* the script name appears; that ordering is the CVE-2026-109618
-   signature.
-3. **Web tier** — worker health anomalies: Apache child segfaults, FPM
-   respawn storms. Exploitation can also succeed without any crash, so
-   absence of segfaults is not a clean bill of health.
-4. **EDR** — shells spawned by the web worker UID immediately after an
-   inbound request, regardless of which CVE landed.
-5. **Application** — responses with abnormally large or non-HTML bodies, or
-   session cookies reflecting memory contents: the info-leak half.
-6. **Network** (only when a CDN was detected) — audit origin reachability,
-   because direct-to-origin traffic skips every edge rule.
-7. **Config audit** (always) — verify the host-side hardening:
-   `session.upload_progress.enabled=Off`, a non-overridable `memory_limit`,
-   low `post_max_size`. Verify from a live web request, not the CLI, and
-   restart every worker afterwards.
-
-## The red team perspective and toolchain
-
-`--redteam` prints short, opinionated paragraphs about this specific host —
-which entry points are guaranteed to exist, why mod_php changes the odds, what
-EOL means for how attackers will prioritise the target, and the operational
-caveat that the disclosure variant probes silently.
-
-`--toolchain` prints the standard toolchain for an engagement of this type,
-grouped in the order an engagement actually runs — reconnaissance, scanning
-and enumeration, vulnerability assessment, exploitation, post-exploitation,
-command and control, persistence and collection, OPSEC and reporting. Every
-entry carries a purpose and a relevance line explaining why it earned its
-slot *for a PHP-facing estate*, plus the ATT&CK techniques it feeds; a host
-sitting behind a CDN gets an extra origin-discovery entry because that is the
-first thing worth doing to a fronted target. The catalogue covers the
-expected standard kit — Amass, subfinder, Shodan/Censys, wafw00f, httpx,
-Nmap, RustScan, ffuf, WPScan, Nuclei, SearchSploit, Metasploit, Burp, curl,
-pwntools, LinPEAS, Impacket, NetExec, Cobalt Strike, Sliver/Mythic/Havoc,
-chisel, and the rest — as scoping and training context printed next to a
-passive finding. It contains no payloads and no exploit instructions.
-
-## Installing and running
-
-Requires Ruby 2.6 or newer. No runtime dependencies beyond the standard
-library — nothing to bundle, nothing to audit.
-
-```bash
-# Run straight from the repository
-./bin/php2shell-poc2026 https://www.example.com/
-
-# Or install it as a gem
-gem build php2shell_poc2026.gemspec
-gem install ./php2shell_poc2026-2.2.0.gem
-php2shell-poc2026 https://www.example.com/
-```
-
-A typical first pass against a host you have not seen before:
-
-```bash
-./bin/php2shell-poc2026 -d -r -c -v https://www.example.com/
-```
-
-`--deep` to widen the probe, `--redteam` for the attacker's view,
-`--toolchain` for the kit list, `--verbose` to see every request the tool
-made while it made up its mind.
-
-## Command-line flags
-
-| Flag | Effect |
+| Branch | First fixed release |
 |---|---|
-| `-d`, `--deep` | Also probe `/index.php` and the common phpinfo paths, increasing the chance of pinning a version. |
-| `-t`, `--timeout SECS` | Per-request timeout in seconds (default 10). |
-| `-k`, `--insecure` | Skip TLS certificate verification — self-signed origins only. |
-| `-r`, `--redteam` | Append the attacker-perspective notes for this host. |
-| `-c`, `--toolchain` | Append the standard red-team toolchain catalogue. |
-| `-v`, `--verbose` | Trace every request, response, redirect and failure the scan went through. |
-| `-j`, `--json` | Emit the full JSON report. Always complete — flags never remove data from it. |
-| `-V`, `--version` | Print the version and exit. |
-| `-h`, `--help` | Print usage and exit. |
+| 8.2 | 8.2.35 |
+| 8.3 | 8.3.36 |
+| 8.4 | 8.4.27 |
+| 8.5 | 8.5.12 |
 
-Multiple URLs may be given in one invocation; each is scanned and reported
-independently.
+Branches `5.x`, `7.x`, `8.0` and `8.1` are end-of-life for this bug class. A
+branch newer than the table is `unknown` / `newer_than_table`, not guessed.
 
-The report sizes itself to the terminal: width comes from `COLUMNS` if set,
-then the controlling terminal, then a conservative 80. Lines wrap with
-hanging indents, long identifiers truncate rather than wrap, and the
-summary table degrades to stacked rows on very narrow screens — a phone
-terminal gets the same information in a different shape, with no horizontal
-scrolling.
+### 5. Exposure vs friction
+
+`risk.score` is **exposure severity**, CVSS-shaped but not a CVSS vector:
+
+- `vulnerable` → `9.8`
+- `eol` → `10.0`
+- `patched` / `no_php` → `0.0`
+- unverified → `null` (`UNKNOWN`)
+
+`risk.friction` is a separate, additive list of what an attacker would have to
+beat: WAF, CDN, FPM worker affinity, auth wall, rate limit, edge block,
+soft-404. A vulnerable interpreter behind a WAF is still a `9.8` exposure; the
+WAF changes exploitation likelihood, not patch state.
+
+`hackability` weighs the observed signals. When positive + negative evidence
+is zero, `ratio` is `null` and the rating is `INCONCLUSIVE` — never `0.00` /
+`NOT EXPOSED`.
+
+### 6. ATT&CK and enrichment
+
+The report always includes an **assessment path** (what this scan did and the
+next low-risk verification steps). A **kill chain** is printed only when a
+vulnerable interpreter is confirmed; printing one for an unconfirmed finding
+trains people to ignore it.
+
+Enrichment modules are pure functions of verdict + environment:
+
+- `Detections` — WAF rules, PHP/FPM logs, worker health, EDR, origin exposure.
+- `Remediation` — version-specific upgrade path, interim WAF controls, config
+  audit, and the difference between a fix and compensation.
+- `Tooling` — host-specific recommendations; offensive entries only with
+  `--authorized`.
+- `NextActions` — read-only commands (curl, openssl, dig) plus explicitly
+  authorized follow-ups.
+- `RedTeam` — attacker-perspective notes with `-r`.
+
+---
 
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
-| `0` | Every target classified `patched` or `unknown` — nothing confirmed exposed. |
-| `1` | Usage error: no URLs given, unparseable flags, or every target failed to parse. |
-| `2` | At least one target classified `vulnerable` or `eol`. CI-safe: fail the build on 2. |
+| `0` | Clear (patched / no PHP) or unverified without `--fail-on` |
+| `1` | Usage, configuration or internal error |
+| `2` | Exposed: vulnerable or end-of-life interpreter |
+| `3` | Inconclusive, when `--fail-on inconclusive` or `--fail-on any` |
+| `4` | Scope violation (`--require-scope`) |
 
-A single malformed target in a list does not abort the run — it is skipped
-with a warning and the remaining targets are still scanned and reported.
+`--fail-on` values:
+
+- `exposed` (default): `2` only for exposure.
+- `inconclusive`: `2` for exposure, `3` for any unverified target.
+- `any`: same as `inconclusive` in this release; both mean "do not let a
+  blocked result pass silently".
+- `never`: always `0` unless there is an internal error.
+
+A blocked host should fail a CI gate when you asked it to. That is the point.
+
+---
 
 ## Output formats
 
-**Text** opens with a summary table — one row per target: verdict code,
-risk, hackable yes/no and the positivity ratio — sized to the terminal
-(and stacked into per-target rows when the terminal is too narrow for
-columns). Then one block per target: verdict with severity and score,
-version *and where that version came from* (X-Powered-By header or phpinfo
-page), the reasoning that produced it, the four surface flags, the raw
-observed evidence (header values, cookie names, status codes, probed
-paths), the deployment fingerprint with its SAPI rationale, then the ATT&CK
-chain, detections, and — only when you ask for them — red-team notes,
-toolchain and trace. Each block closes with the evidence-weighted technical
-summary (hackability rating, positivity ratio, every signal with its
-weight, prerequisites, reliability, impact) and a remediation section —
-concrete next steps with this host's version numbers, config keys and
-honest fix-versus-compensation framing. The run then closes with the
-cross-target run summary and a one-line usage tip.
+| Format | Flag | Use |
+|---|---|---|
+| Text | `-f text` (default) | Human triage; `COLUMNS` aware |
+| JSON | `-j`, `--json`, `-f json` | Full envelope, schema version `3.0` |
+| Markdown | `-f markdown` | Tickets, bug bounty writeups, docs |
+| SARIF | `-f sarif` | GitHub code scanning / security dashboards |
+| CSV | `-f csv` | Spreadsheets and asset inventories |
+| NDJSON | `-f ndjson` | Log shippers, streaming pipelines |
 
-**JSON** is machine-readable and holds the same eleven sections for every
-target, regardless of which display flags were passed:
+`--output FILE` writes to a file; `--output -` writes to stdout. `--compact`
+makes JSON one line. `--evidence` adds a short body excerpt to JSON/NDJSON
+probes (target-controlled data; use deliberately).
 
+The JSON envelope is documented in [docs/JSON-SCHEMA.md](docs/JSON-SCHEMA.md).
+Every format gets the same computed summary, so text, JSON and SARIF cannot
+disagree about how many targets were exposed.
+
+---
+
+## Command-line reference
+
+```text
+Usage: php2shell-poc2026 [options] URL [URL ...]
 ```
-verdict · environment · risk · attack_chain · detections · red_team ·
-tooling · fingerprint · hackability · remediation · trace
+
+### Scanning
+
+| Flag | Default | Description |
+|---|---|---|
+| `-p`, `--profile passive\|standard\|deep` | `standard` | Probe depth |
+| `-d`, `--deep` | — | Alias for `--profile deep` |
+| `-t`, `--timeout SECS` | `10` | Read timeout |
+| `--connect-timeout SECS` | `5` | Connect/TLS timeout |
+| `--max-redirects N` | `5` | Redirects per probe |
+| `--max-body BYTES` | `512k` | Response cap (`512k`, `1M`) |
+| `--retries N` | `1` | Retries for transient failures |
+| `--no-retry-after` | — | Ignore `Retry-After` |
+| `--delay MS` | `250` | Per-host minimum delay |
+| `--threads N` | `4` | Target worker threads |
+| `--max-requests N` | `25` | Per-target request budget |
+| `--no-adaptive` | — | Probe even after a blanket denial |
+| `--path PATH` | — | Extra path (repeatable) |
+
+### HTTP
+
+| Flag | Description |
+|---|---|
+| `-H`, `--header "Name: value"` | Extra header (repeatable) |
+| `--cookie STRING` | Cookie header |
+| `-A`, `--user-agent STRING` | User-Agent override |
+| `--proxy URL` | HTTP proxy |
+| `--no-proxy` | Ignore proxy environment variables |
+| `--basic-auth USER:PASS` | Basic auth, same-origin only |
+| `--bearer TOKEN` | Bearer token, same-origin only |
+| `--ca-file PATH` | Custom CA bundle |
+| `-k`, `--insecure` | Skip TLS verification (authorized self-signed only) |
+
+### Scope and authorization
+
+| Flag | Description |
+|---|---|
+| `--scope FILE` | Only scan hosts matching the scope file |
+| `--exclude FILE` | Skip hosts matching the exclusion file |
+| `--require-scope` | Fail closed (`4`) if a target is outside scope |
+| `--authorized` | Include offensive/post-exploitation tooling entries |
+
+### Reporting
+
+| Flag | Description |
+|---|---|
+| `-f`, `--format FORMAT` | `text`, `json`, `markdown`, `sarif`, `csv`, `ndjson` |
+| `-j`, `--json` | Alias for `--format json` |
+| `-o`, `--output FILE` | Write to a file; `-` means stdout |
+| `--compact` | Compact JSON |
+| `--no-banner` | Suppress the banner |
+| `--no-color` | Colour-free output (default) |
+| `--evidence` | Body excerpt in JSON/NDJSON |
+| `-q`, `--quiet` | Summary table + run summary only (text) |
+| `-r`, `--redteam` | Red-team notes |
+| `-c`, `--toolchain` | Relevant toolchain catalogue |
+| `--toolchain-full` | Full catalogue |
+| `-v`, `--verbose` | Request trace |
+| `--fail-on MODE` | `exposed`, `inconclusive`, `any`, `never` |
+| `--dry-run` | Print the request plan; no socket |
+| `-C`, `--config FILE` | YAML defaults |
+| `-V`, `--version` | Version |
+| `-h`, `--help` | Help |
+
+---
+
+## Profiles
+
+| Profile | Requests (typical) | What it does |
+|---|---|---|
+| `passive` | 2 | Root + text canary; no `.php` probes |
+| `standard` | 4 | Root + text/php canaries + `/index.php`; framework paths only if detected |
+| `deep` | up to `--max-requests` | Common PHP paths, framework paths, `robots.txt`/`sitemap.xml` discovery |
+
+Deep mode is still bounded by `--max-requests` and never brute-forces. It asks
+for a handful of paths the site itself publishes.
+
+---
+
+## Scope files
+
+Plain text, one pattern per line:
+
+```text
+# exact host and subdomains
+example.com
+# subdomains only
+*.example.com
+# single IP, CIDR, or URL
+192.0.2.10
+192.0.2.0/24
+https://app.example.com
 ```
 
-`verdict` carries `status`, `version`, `version_source`, `reason` and
-`attack_surface`; `environment` carries `server`, `cdn`, `waf`, `sapi` and
-`sapi_rationale`; `risk` carries `score`, `grade` and `scale`;
-`fingerprint` carries the verbatim evidence (`x_powered_by`, `server`,
-`cookie_names`, `statuses`, `probed_paths`); `hackability` carries the
-`rating`, `label`, `ratio`, `positive` / `negative` weights, `hackable`
-boolean, `prerequisites`, `reliability`, `impact` and the full signed
-`signals` list; `remediation` is the ordered list of next steps printed in
-the text report — ready to paste into a ticket; the three enrichment arrays
-carry their full records (techniques with IDs and notes, detections with
-layer and detail, tool entries with phase, purpose, relevance and
-techniques); `trace` is populated when `--verbose` was used and empty
-otherwise. The schema is treated as a stable contract — fields may be
-added, not silently removed or renamed.
+```sh
+php2shell --scope scope.txt --require-scope https://app.example.com/
+# exit 4 if the target is outside the list
+```
+
+Without `--require-scope`, out-of-scope targets are skipped with a warning and
+the run continues. With it, the first out-of-scope target aborts before any
+network traffic.
+
+---
+
+## Configuration file
+
+```yaml
+# php2shell.yml
+profile: deep
+format: sarif
+output: reports/php2shell.sarif
+delay_ms: 500
+threads: 2
+max_requests: 40
+no_proxy: true
+scope: scope.txt
+require_scope: true
+headers:
+  X-Assessment: authorized
+paths:
+  - /health.php
+targets:
+  - https://example.com/
+```
+
+```sh
+php2shell --config php2shell.yml
+php2shell --config php2shell.yml https://other.example.com/   # CLI targets win
+```
+
+Relative `scope`, `exclude`, `ca_file` and `output` paths are resolved relative
+to the config file. Unknown keys fail closed rather than being ignored.
+
+---
+
+## CI examples
+
+```sh
+# Fail on exposure only
+php2shell --format sarif --output php2shell.sarif https://example.com/
+
+# Fail on exposure or any blocked/unverified target
+php2shell --fail-on inconclusive --format json https://example.com/
+```
+
+```yaml
+- name: PHP2Shell triage
+  run: |
+    php2shell --scope scope.txt --require-scope \
+      --fail-on inconclusive --format sarif \
+      --output php2shell.sarif https://app.example.com/
+- uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: php2shell.sarif
+```
+
+---
 
 ## Safety properties
 
-These are guarantees of the implementation, not configuration options:
+- **GET only.** No POST, no payloads, no fuzzing, no state-changing verbs.
+- **Bounded.** `--max-requests`, body caps, redirect caps, retries, rate limits.
+- **Same-origin credentials.** `--cookie`, `--basic-auth` and `--bearer` are
+  not forwarded across redirects to a different origin.
+- **Scope enforced before I/O.** `--require-scope` exits `4` before the first
+  socket.
+- **Target data is untrusted.** Headers, titles, bodies and paths are
+  sanitised for ANSI/OSC/control/bidi before they reach a terminal or a
+  Markdown/CSV cell.
+- **No silent scanning.** The User-Agent identifies the tool and the project.
+- **No exploit code.** If you need exploitation, use an authorized,
+  purpose-built framework under a separate approval — this repository is not
+  one.
 
-- Only `GET` requests are ever issued. No POST, no PUT, no verb that could
-  change state on a live host.
-- No payload, exploit or malformed request exists anywhere in the codebase;
-  every request is one a normal browser could have sent.
-- Redirects are followed to a bounded five hops, with a hard error beyond that.
-- Every request carries a timeout, and failures degrade the verdict rather
-  than crashing the run.
-- TLS verification is on by default; `--insecure` is opt-in per invocation.
-- The `User-Agent` honestly identifies the tool and links conceptually to
-  this README — a defender seeing it in their logs should be able to find out
-  exactly what it did.
+---
 
 ## Project structure
 
-One class or module per file, so a file can be read, reviewed and changed
-without scrolling past three unrelated concerns:
-
-```
-PHP2ShellPOC2026/
-├── README.md                     ← this file
-├── LICENSE                       ← MIT
-├── php2shell_poc2026.gemspec     ← gem packaging
-├── bin/
-│   └── php2shell-poc2026         ← executable entry point
-├── docs/
-│   └── UML.md                    ← class, sequence, pipeline and state diagrams
-└── lib/
-    ├── php2shell_poc2026.rb      ← single require that loads everything
-    └── php2shell_poc2026/
-        ├── version.rb            ← version and User-Agent identity
-        ├── verdict.rb            ← the four verdicts and fix-level policy
-        ├── probe.rb              ← one HTTP response + signal extraction
-        ├── environment.rb        ← CDN / WAF / SAPI fingerprinting
-        ├── attack.rb             ← MITRE ATT&CK kill chain
-        ├── detections.rb         ← blue-team detection opportunities
-        ├── red_team.rb           ← attacker-perspective notes
-        ├── tooling.rb            ← standard red-team toolchain catalogue
-        ├── risk.rb               ← exposure-weighted scoring
-        ├── hackability.rb        ← evidence weighing, positivity ratio, hackable verdict
-        ├── remediation.rb        ← what to do about the finding, per verdict
-        ├── layout.rb             ← terminal width, wrapping, responsive summary table
-        ├── scanner.rb            ← orchestration + ScanResult
-        ├── report.rb             ← text and JSON rendering
-        └── cli.rb                ← flags, exit codes
+```text
+bin/                     php2shell-poc2026 + php2shell
+lib/php2shell_poc2026/
+  cli.rb                 options, config, scope, threads, output, exit codes
+  scanner.rb             adaptive orchestration, discovery, enrichment
+  http_client.rb         Net::HTTP transport: redirects, retries, proxy, TLS
+  probe.rb               one response + PHP/access evidence
+  access.rb              blocked / restricted / soft-404 / auth-wall / 429
+  verdict.rb             fix table and status decision
+  risk.rb                exposure score + friction
+  hackability.rb         signed evidence ratio (nil when no evidence)
+  environment.rb         edge / CDN / WAF / hosting / SAPI / framework
+  report/                text, JSON, Markdown, SARIF, CSV, NDJSON
+  scope.rb, target.rb, idn.rb, sanitize.rb, options.rb
+  attack.rb, detections.rb, remediation.rb, tooling.rb, next_actions.rb
+docs/                    methodology, JSON schema, authorized use, security
+test/                    Minitest suite with fake transports and local TCP
 ```
 
-## Diagrams
+---
 
-Full UML — class diagram, scan sequence, pipeline flow and verdict state
-machine — lives in [`docs/UML.md`](docs/UML.md). The short version of the
-scan pipeline:
+## Development
 
-```mermaid
-flowchart TD
-    A[CLI parses flags] --> B[Scanner.scan per target]
-    B --> C[Normalise URL]
-    C --> D[GET root + optional deep paths]
-    D --> E[Extract version &amp; surface signals]
-    E --> F[Fingerprint CDN / WAF / SAPI]
-    F --> G[Verdict.assess]
-    G --> H[Risk.assess]
-    H --> I[Enrich: ATT&amp;CK, detections,<br/>red team notes, toolchain]
-    I --> J[ScanResult]
-    J --> K{Output}
-    K -->|text| L["Report::Text"]
-    K -->|"--json"| M[Report.json]
-    L --> N[Exit 0 / 1 / 2]
-    M --> N
+```sh
+bundle install
+bundle exec rake test
+ruby -Ilib bin/php2shell-poc2026 --dry-run https://example.com/
+gem build php2shell_poc2026.gemspec
 ```
 
-## Extending the tool
+The test suite uses fake transports and a local TCP server; it does not scan
+the internet.
 
-Each concern lives in exactly one file, so extension points are where you
-would expect them:
+---
 
-- **A new ATT&CK technique** belongs in `attack.rb` as one `Technique` entry
-  with its note explaining why it applies to this bug class.
-- **A new detection** belongs in `detections.rb`; write the control and the
-  concrete detail a detection engineer can act on without reading our source.
-- **A new tool in the catalogue** belongs in `tooling.rb` — phase, purpose,
-  relevance and the ATT&CK techniques it feeds. The relevance line is the
-  part worth taking seriously: say why it earned its slot for a PHP-facing
-  estate, not what the tool's homepage says.
-- **A new fingerprint** (another CDN, another WAF, another SAPI tell) belongs
-  in `environment.rb` or `probe.rb`, and should come with the same
-  written rationale every existing one carries.
-- **A new hackability signal** belongs in `hackability.rb` as one signed
-  weight with a label an operator can act on — positive if it moves a host
-  towards exploitability, negative if it holds it back. Weights are a
-  judgement call, so say in the label why the number is what it is.
-- **A new remediation step** belongs in `remediation.rb`, keyed to the
-  verdict it follows from, written so it can be pasted into a ticket as-is:
-  a version number, a config key, an action. If a reader cannot do the
-  thing you described without asking a question, rewrite it.
-- **A new output format** belongs in `report.rb`; scan logic should not need
-  to change to add one.
+## Documentation
 
-A change is in good shape when `ruby -c` passes on every file and the
-tool still returns 0, 1 and 2 correctly against a known-patched, a
-known-unreachable and a known-vulnerable host.
+- [docs/METHODOLOGY.md](docs/METHODOLOGY.md) — why the control probe exists,
+  how evidence is weighed, and what each verdict means.
+- [docs/JSON-SCHEMA.md](docs/JSON-SCHEMA.md) — the v3 JSON envelope.
+- [docs/AUTHORIZED-USE.md](docs/AUTHORIZED-USE.md) — scope, ROE and legal
+  boundaries.
+- [docs/SECURITY.md](docs/SECURITY.md) — threat model and reporting.
+- [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) — code and test conventions.
+- [docs/UML.md](docs/UML.md) — class, sequence and state diagrams.
+- [CHANGELOG.md](CHANGELOG.md) — what changed in 3.0.
 
-## Contributing
-
-Issues and pull requests are welcome. Keep the house style: one class or
-module per file; comments explain *why* a decision was made, never restate
-what the next line does; no doxygen parameter lists — the signature is
-already there; and the passive-only property is non-negotiable. A PR that
-adds an active probe, a payload or an exploit path will be declined
-regardless of how useful it is, because that is the property that makes this
-tool safe to point at production.
+---
 
 ## License and disclaimer
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
 
-This tool performs passive reconnaissance only, but reconnaissance is still
-reconnaissance. Scan only hosts and networks you own or have explicit written
-authorization to assess. The authors assume no responsibility for use of this
-tool outside lawful, authorized security testing.
+This tool produces an **indication**, not a certification. A `patched` result
+covers the version evidence it saw; a `no_php` result covers the routes it
+tested; an `inconclusive` result means exactly that. It is not a substitute
+for host-side configuration review, authenticated testing under separate
+authorization, or a real assessment by a human who understands the estate.
+
+Only use it on systems you own or have explicit permission to assess.

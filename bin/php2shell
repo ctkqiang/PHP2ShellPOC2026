@@ -1,0 +1,11 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# `php2shell` is the short alias for the same launcher. It exists so an
+# installed gem can be invoked without typing the long executable name; both
+# entry points resolve to the same CLI and exit-code contract.
+
+$LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
+require "php2shell_poc2026"
+
+exit PHP2ShellPOC2026::CLI.new(ARGV).run

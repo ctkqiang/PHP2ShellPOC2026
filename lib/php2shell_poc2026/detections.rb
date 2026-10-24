@@ -4,16 +4,22 @@ module PHP2ShellPOC2026
   # Purple-team output: detection opportunities keyed to what was actually
   # observed on this host, not a generic hardening checklist. Layers run
   # outermost-first (WAF → network → logs → runtime → EDR) because that is
-  # the order traffic meets them, and each detail names concrete rules,
-  # greps or signals — a detection engineer should be able to act on a line
-  # without opening this tool's source.
+  # the order traffic meets them.
   module Detections
-    Layer = Struct.new(:layer, :control, :detail, keyword_init: true)
+    Layer = Struct.new(:layer, :control, :detail, keyword_init: true) do
+      def to_h
+        { layer: layer, control: control, detail: detail }
+      end
+    end
 
     def self.for(verdict, environment)
       layers = []
       layers.concat(exposure_layers) if verdict.exposed?
       layers << origin_layer(environment) if environment.cdn?
+      layers.concat(edge_layers(verdict, environment)) if verdict.unverified?
+      layers << soft_404_layer if verdict.access&.state == :soft_404
+      layers << rate_limit_layer if verdict.access&.state == :rate_limited
+      layers << no_php_layer if verdict.no_php?
       layers << config_layer
       layers
     end
@@ -56,13 +62,72 @@ module PHP2ShellPOC2026
     end
 
     # A CDN in front usually means the origin is not where defenders think
-    # it is — edge rules protect the front door only, so the first question
-    # is always whether the back door is nailed shut.
+    # it is — edge rules protect the front door only.
     def self.origin_layer(environment)
       Layer.new(
         layer: "Network", control: "Origin reachability audit",
         detail: "CDN (#{environment.cdn}) fronts the app, but direct-to-origin requests bypass its rules. " \
                 "Confirm origin ports accept traffic only from the CDN range."
+      )
+    end
+
+    # The most important lesson of a 403: it is an observation about the
+    # edge, not a clean bill of health for the interpreter.
+    def self.edge_layers(verdict, environment)
+      layers = []
+      if verdict.access&.blocked?
+        layers << Layer.new(
+          layer: "Edge", control: "Uniform denial — confirm intent and do not treat it as a patch",
+          detail: "Every probe, including a random control path, returned the same denial " \
+                  "(#{verdict.access.details[:statuses].join('/')}). Verify whether this is geo/IP blocking, " \
+                  "bot management or a WAF rule. Log canary-path requests as reconnaissance, and ensure the origin " \
+                  "is not reachable directly outside the edge."
+        )
+      elsif verdict.access&.restricted?
+        layers << Layer.new(
+          layer: "Edge", control: "Path-level access control",
+          detail: "The root path was denied while a random control path resolved differently. Check whether the " \
+                  "restriction is intentional and whether alternate vhosts or paths expose the same interpreter."
+        )
+      elsif verdict.access&.state == :auth_wall
+        layers << Layer.new(
+          layer: "Application", control: "Authentication wall",
+          detail: "The surface redirects to a login. Version evidence from headers may still leak; host-side " \
+                  "verification is the reliable path unless authenticated testing is authorized."
+        )
+      end
+
+      layers << Layer.new(
+        layer: "Recon detection", control: "Random canary-path requests",
+        detail: "This scan requests a random nonexistent path to distinguish a blanket denial from a real 404. " \
+                "Alert on bursts of random-path requests from one source; they are a reliable scanner signature."
+      )
+      layers
+    end
+
+    def self.soft_404_layer
+      Layer.new(
+        layer: "Edge", control: "Catch-all/soft-404 routing",
+        detail: "The origin returns 200 for nonexistent paths, so path status codes and directory brute-force " \
+                "results are unreliable. Prefer header, cookie and phpinfo evidence; validate findings with a " \
+                "body/content differential."
+      )
+    end
+
+    def self.rate_limit_layer
+      Layer.new(
+        layer: "Edge", control: "Rate limiting observed (HTTP 429)",
+        detail: "The origin is throttling. Respect Retry-After, raise the scanner delay, and do not interpret a " \
+                "429 as absence of the application."
+      )
+    end
+
+    def self.no_php_layer
+      Layer.new(
+        layer: "Verification", control: "No PHP on the tested routes",
+        detail: "No PHP markers were observed and the control path behaved normally. This covers only the paths " \
+                "that were tested: check other vhosts, ports, subdomains and application routes before concluding " \
+                "the estate is PHP-free."
       )
     end
 
