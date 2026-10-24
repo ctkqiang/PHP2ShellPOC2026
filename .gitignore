@@ -9,3 +9,6 @@ Gemfile.lock
 
 # Generated SARIF reports
 /php2shell.sarif
+
+
+/blog/
