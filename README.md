@@ -1,7 +1,10 @@
 # PHP2ShellPOC2026
 
-Passive exposure triage for the **PHP2Shell** bug class (CVE-2026-109618 and
-CVE-2026-109619). The headline answer is the decision the operator needs —
+[English](README.md) | [简体中文](README_zh.md)
+
+PHP2Shell exposure triage with an authorized lab POC for the **PHP2Shell** bug
+class (CVE-2026-109618 and CVE-2026-109619). The headline answer is the decision
+the operator needs —
 **can this host be hacked by PHP2Shell: YES, NO or UNKNOWN** — followed by the
 evidence, the caveats and the action that follows. Point it at a web endpoint
 and it answers four questions in one report:
@@ -14,13 +17,18 @@ and it answers four questions in one report:
 4. **What should happen next?** ATT&CK mapping, detection opportunities,
    remediation, and copy-pasteable next actions.
 
-It sends ordinary `GET` requests. There is no exploit code, no payload, no
-fuzzing and no state-changing verb anywhere in the codebase.
+The scanner sends ordinary `GET` requests. When an interactive text-mode scan
+finds an exposed host, it asks one question — whether to run the authorized
+lab POC — and only an explicit `y` starts the POST/multipart exploit flow.
+There are no POC flags.
 
 > **Authorized use only.** This is a triage tool, not a permission slip.
 > Confirm the program scope, rules of engagement and rate limits before you
 > point it at anything. `--scope` and `--require-scope` exist to make that
-> boundary enforceable, not decorative. See [docs/AUTHORIZED-USE.md](docs/AUTHORIZED-USE.md).
+> boundary enforceable, not decorative. The POC is calibrated for the
+> bookworm PHP 8.4.26 lab build, can disrupt the target, and is never a
+> substitute for written authorization. See
+> [docs/AUTHORIZED-USE.md](docs/AUTHORIZED-USE.md).
 
 ---
 
@@ -73,7 +81,9 @@ cd PHP2ShellPOC2026
 ./install.sh --user     # user gem directory
 ```
 
-The gem has **no runtime dependencies**. Ruby `>= 2.7` and RubyGems are enough.
+The gem has **no runtime dependencies**. Ruby `>= 2.7` and RubyGems are
+enough. The POC is Ruby standard library only; there is no Python runtime or
+external exploit script.
 
 ### Docker
 
@@ -102,15 +112,6 @@ php2shell -d https://example.com/
 # Deep + expert appendix: technical detail, attacker notes and tools
 php2shell -d -r -c -v https://example.com/
 
-# Ask after the report whether to run the safe follow-up checks
-php2shell https://example.com/
-
-# Run the safe follow-up checks without asking
-php2shell --yes https://example.com/
-
-# Also allow the authorized browser-UA retry and active nuclei prompt
-php2shell --authorized --yes https://example.com/
-
 # Machine-readable report
 php2shell --json https://example.com/ > report.json
 
@@ -134,11 +135,6 @@ fix list and the request trace. `-c` adds tools, `--toolchain-full` adds the
 reasoning and lower-priority entries, `-r` adds attacker notes, and `--quiet`
 keeps only the bottom line, findings table and run summary.
 
-After a text report on an interactive terminal, the tool asks whether to run
-the safe follow-up checks: a fresh response, the captured TLS/DNS data and a
-SARIF export. `--yes` skips the question; `--no-interactive` disables it. The
-browser-UA retry and active tools are only offered with `--authorized`.
-
 Colour is used only when stdout is a terminal; redirected output, `--output`,
 `NO_COLOR` and `--no-color` stay plain.
 
@@ -150,9 +146,9 @@ is the language flag, `PHP2SHELL_LANG`, `LC_ALL`, `LC_MESSAGES`, `LANGUAGE`,
 `LANG`, then the macOS user locale; unsupported languages fall back to
 English. Width, wrapping and table alignment are computed with CJK characters
 counted as two columns, and closing punctuation is kept off the start of a
-line. Machine
-formats (`json`, `markdown`, `sarif`, `csv`, `ndjson`) always keep English
-messages so their contracts stay stable.
+line. The POC prompt, warning, progress and result follow the same language.
+Machine formats (`json`, `markdown`, `sarif`, `csv`, `ndjson`) always keep
+English messages so their contracts stay stable, and they never run the POC.
 
 ---
 
@@ -300,6 +296,30 @@ Enrichment modules are pure functions of verdict + environment:
   authorized follow-ups.
 - `RedTeam` — attacker-perspective notes with `-r`.
 
+### 7. Authorized POC
+
+When a text-mode scan finds `vulnerable` or `eol`, the tool asks once:
+
+```text
+  AUTHORIZED PENETRATION TEST
+  Detected PHP 8.4.26. The lab POC is calibrated for PHP 8.4.26 (bookworm).
+  This host is exposed. Proceed with the authorized penetration test? [y/N]
+```
+
+`n` exits. `y` prints the authorized-use warning and runs the Ruby POC. There
+is no POC flag. The POC reproduces the lab POC's wire behavior — raw HTTP/1.1,
+multipart field layout, heap/library leak math, offsets, retries, worker
+rotation and `out/p1` proof — but it is written in Ruby and isolated under
+`lib/php2shell_poc2026/poc/`.
+
+The POC is calibrated for the bookworm PHP 8.4.26 lab build, performs memory
+exhaustion and worker rotation, and can disrupt the target. Machine-readable
+formats, `--quiet` and non-interactive sessions cannot answer the question, so
+they never run it. Every run ends with an explicit `RESULT: SUCCESS` or
+`RESULT: FAILED`; `-v` adds the heap anchor, library base, carrier address,
+`system()` address and the recorded output log. See
+[docs/POC.md](docs/POC.md) for the full contract.
+
 ---
 
 ## Exit codes
@@ -322,6 +342,11 @@ Enrichment modules are pure functions of verdict + environment:
 
 A blocked host should fail a CI gate when you asked it to. That is the point.
 
+The POC does not change the exit code. If the host is exposed, the process
+still exits `2` whether the user answers `n`, the POC fails, or the POC
+confirms code execution. The scan finding is the contract; the POC is an
+additional evidence step.
+
 ---
 
 ## Output formats
@@ -342,6 +367,10 @@ probes (target-controlled data; use deliberately).
 The JSON envelope is documented in [docs/JSON-SCHEMA.md](docs/JSON-SCHEMA.md).
 Every format gets the same computed summary, so text, JSON and SARIF cannot
 disagree about how many targets were exposed.
+
+The POC is intentionally absent from JSON, Markdown, SARIF, CSV and NDJSON:
+those formats have no terminal to answer the y/N question. It runs only in an
+interactive text report. Use `--format text` on a TTY to see it.
 
 ---
 
@@ -393,6 +422,10 @@ Usage: php2shell-poc2026 [options] URL [URL ...]
 | `--require-scope` | Fail closed (`4`) if a target is outside scope |
 | `--authorized` | Include offensive/post-exploitation tooling entries |
 
+The POC is not controlled by a flag. It is offered only after an exposed
+text-mode scan and only after an explicit `y` answer. See
+[docs/POC.md](docs/POC.md).
+
 ### Reporting
 
 | Flag | Description |
@@ -411,8 +444,6 @@ Usage: php2shell-poc2026 [options] URL [URL ...]
 | `-c`, `--toolchain` | Relevant tools |
 | `--toolchain-full` | All tools with reasons |
 | `-v`, `--verbose` | Technical details, attack-path notes, defender checks, all actions and the request trace |
-| `--no-interactive` | Do not ask to run safe follow-up checks |
-| `--yes` | Run safe follow-up checks without asking (text reports only) |
 | `--fail-on MODE` | `exposed`, `inconclusive`, `any`, `never` |
 | `--dry-run` | Print the request plan; no socket |
 | `-C`, `--config FILE` | YAML defaults |
@@ -512,12 +543,23 @@ php2shell --fail-on inconclusive --format json https://example.com/
     sarif_file: php2shell.sarif
 ```
 
+CI never runs the POC: the prompt requires an interactive terminal. A CI run
+that finds an exposed host still fails with exit `2` and uploads the SARIF
+report; it cannot answer the POC question.
+
 ---
 
 ## Safety properties
 
-- **GET only.** No POST, no payloads, no fuzzing, no state-changing verbs.
-- **Bounded.** `--max-requests`, body caps, redirect caps, retries, rate limits.
+- **Scanner is GET-only.** No POST, no payloads, no fuzzing and no
+  state-changing verbs during the scan itself.
+- **POC is explicit and isolated.** The POST/multipart flow lives under
+  `lib/php2shell_poc2026/poc/`, runs only after the exposed-host y/N prompt,
+  and prints the authorized-use warning first.
+- **Scanner is bounded.** `--max-requests`, body caps, redirect caps, retries
+  and rate limits apply to the scan. The POC has its own fixed timeout,
+  retries and 12 MB request bodies; it is not a scanner probe and is not
+  covered by `--max-requests`.
 - **Same-origin credentials.** `--cookie`, `--basic-auth` and `--bearer` are
   not forwarded across redirects to a different origin.
 - **Scope enforced before I/O.** `--require-scope` exits `4` before the first
@@ -530,13 +572,9 @@ php2shell --fail-on inconclusive --format json https://example.com/
 - **Browser-UA mode is opt-in.** `--browser-ua` can cross a bot-control
   boundary, so it is never automatic, the report labels the mode, and the
   operator must confirm authorization first.
-- **Follow-up automation is read-only by default.** The post-report prompt
-  runs a fresh response check, the captured TLS/DNS data and a SARIF export.
-  The browser-UA retry and active tools require `--authorized`; the prompt is
-  not a permission slip.
-- **No exploit code.** If you need exploitation, use an authorized,
-  purpose-built framework under a separate approval — this repository is not
-  one.
+- **No automatic exploitation.** The POC is never started by a flag, a CI
+  job or a machine-readable report. It requires an interactive exposed-host
+  `y` answer and prints the warning before it runs.
 
 ---
 
@@ -555,6 +593,7 @@ lib/php2shell_poc2026/
   hackability.rb         signed evidence ratio (nil when no evidence)
   environment.rb         edge / CDN / WAF / hosting / SAPI / framework
   block_page.rb          OVHcloud/Cloudflare/Akamai/... block-page fingerprints
+  poc/                   authorized raw-HTTP lab POC, after the y/N prompt
   report/                text, JSON, Markdown, SARIF, CSV, NDJSON
   scope.rb, target.rb, idn.rb, sanitize.rb, options.rb
   attack.rb, detections.rb, remediation.rb, tooling.rb, next_actions.rb
@@ -574,7 +613,9 @@ gem build php2shell_poc2026.gemspec
 ```
 
 The test suite uses fake transports and a local TCP server; it does not scan
-the internet.
+the internet and does not run the POC against a live target. POC helper tests
+cover multipart bytes, cookie decoding, heap/library math, carrier layout,
+offset parsing, consent and presentation in `test/poc_test.rb`.
 
 ---
 
@@ -582,12 +623,15 @@ the internet.
 
 - [docs/METHODOLOGY.md](docs/METHODOLOGY.md) — why the control probe exists,
   how evidence is weighed, and what each verdict means.
+- [docs/POC.md](docs/POC.md) — the authorized POC contract, defaults, proof
+  mechanism and limitations.
 - [docs/JSON-SCHEMA.md](docs/JSON-SCHEMA.md) — the v3 JSON envelope.
 - [docs/AUTHORIZED-USE.md](docs/AUTHORIZED-USE.md) — scope, ROE and legal
   boundaries.
 - [docs/SECURITY.md](docs/SECURITY.md) — threat model and reporting.
 - [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) — code and test conventions.
 - [docs/UML.md](docs/UML.md) — class, sequence and state diagrams.
+- [README_zh.md](README_zh.md) — 简体中文 README.
 - [CHANGELOG.md](CHANGELOG.md) — what changed in 3.0.
 
 ---
@@ -602,4 +646,13 @@ tested; an `inconclusive` result means exactly that. It is not a substitute
 for host-side configuration review, authenticated testing under separate
 authorization, or a real assessment by a human who understands the estate.
 
-Only use it on systems you own or have explicit permission to assess.
+The POC is not a certification either. It is calibrated for the bookworm PHP
+8.4.26 lab build, can disrupt the target, and its `out/p1` proof depends on a
+shared lab volume or a command that writes somewhere you can read. A failed
+POC does not prove the host is safe; a confirmed POC does not authorize you to
+go further.
+
+Only use it on systems you own or have explicit written permission to assess.
+Do not use it against military, government, critical infrastructure or any
+system outside your authorization. The authors and contributors accept no
+liability for misuse, damage or legal consequences.

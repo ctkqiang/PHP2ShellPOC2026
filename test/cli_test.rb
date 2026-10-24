@@ -62,8 +62,6 @@ class CliTest < Minitest::Test
     assert_includes out, "-en"
     assert_includes out, "-zh"
     assert_includes out, "--browser-ua"
-    assert_includes out, "--yes"
-    assert_includes out, "--no-interactive"
   end
 
   def test_lang_flag_sets_text_locale
@@ -107,15 +105,6 @@ class CliTest < Minitest::Test
     assert_includes opts.user_agent, "Mozilla/5.0"
   end
 
-  def test_no_interactive_and_yes_flags_set_options
-    cli, code, = run_cli_instance("--dry-run", "--no-interactive", "https://192.0.2.10/")
-    assert_equal 0, code
-    refute cli.instance_variable_get(:@options).interactive
-
-    cli, code, = run_cli_instance("--dry-run", "--yes", "https://192.0.2.10/")
-    assert_equal 0, code
-    assert cli.instance_variable_get(:@options).yes
-  end
 
   def test_lang_auto_detects_device_locale
     previous = ENV["PHP2SHELL_LANG"]

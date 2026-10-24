@@ -8,8 +8,6 @@ class OptionsTest < Minitest::Test
     assert_equal "standard", opts.profile
     assert_equal "text", opts.format
     assert_equal 25, opts.max_requests
-    assert opts.interactive
-    refute opts.yes
   end
 
   def test_invalid_profile

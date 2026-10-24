@@ -1,8 +1,9 @@
 # PHP2ShellPOC2026 — architecture
 
-Three views of the 3.0 system. All diagrams are Mermaid and render on GitHub.
+Four views of the 3.0 system. All diagrams are Mermaid and render on GitHub.
 
 - [Scan sequence](#scan-sequence) — what happens for one target
+- [Authorized POC sequence](#authorized-poc-sequence) — the post-scan y/N path
 - [Class map](#class-map) — what exists and who owns policy
 - [Verdict state machine](#verdict-state-machine) — how evidence becomes a status
 
@@ -55,6 +56,42 @@ only after confirmed exposure**.
 
 ---
 
+## Authorized POC sequence
+
+```mermaid
+sequenceDiagram
+    participant CLI
+    participant Poc
+    participant Runner as Poc::Runner
+    participant Transport as Poc::Transport
+    participant Proof as Poc::Proof
+    participant Presenter as Poc::Presenter
+
+    CLI->>CLI: render text report
+    alt verdict is vulnerable/eol and stdout is a TTY
+        CLI->>Poc: consent? + detected version
+        alt answer is no
+            CLI-->>CLI: exit with scan code (2)
+        else answer is yes
+            Poc-->>CLI: authorized-use warning
+            CLI->>Runner: call(target, options)
+            Runner->>Transport: raw POST/multipart phases
+            Transport-->>Runner: response / cookie leaks
+            Runner->>Proof: read out/p1
+            Runner-->>CLI: Poc::Result
+            CLI->>Presenter: render result
+            CLI-->>CLI: exit 2
+        end
+    else not exposed, machine format, quiet or non-interactive
+        CLI-->>CLI: no POC
+    end
+```
+
+The POC is not a scanner probe. It is reached only from the interactive text
+path, never from JSON/SARIF/CSV/NDJSON, `--quiet` or non-interactive output.
+
+---
+
 ## Class map
 
 ```mermaid
@@ -65,6 +102,7 @@ classDiagram
         -load_config(path)
         -enforce_scope(targets, scope, exclude)
         -scan_all(work) ScanResult[]
+        -maybe_run_poc(results)
         -exit_code(results) Integer
     }
 
@@ -153,6 +191,34 @@ classDiagram
         +summary(results, options, meta) Hash
     }
 
+    class Poc {
+        +consent(input, out) Boolean
+        +disclaimer() String
+    }
+
+    class PocRunner {
+        +call() Result
+        -discover_heap_anchor()
+        -discover_library_anchor()
+        -deliver_command()
+    }
+
+    class PocTransport {
+        +post(body, boundary)
+        +get(path)
+        -connect()
+    }
+
+    class PocResult {
+        +status Symbol
+        +proof String
+        +confirmed?() Boolean
+    }
+
+    class PocPresenter {
+        +render()
+    }
+
     class Scope {
         +include?(target) Decision
         +load(path) Scope
@@ -161,6 +227,11 @@ classDiagram
     CLI --> Scanner
     CLI --> Scope
     CLI --> Report
+    CLI --> Poc
+    Poc --> PocRunner
+    PocRunner --> PocTransport
+    PocRunner --> PocResult
+    CLI --> PocPresenter
     Scanner --> HttpClient
     HttpClient --> Probe
     Scanner --> Access
@@ -179,6 +250,9 @@ Policy lives in the decision modules, not in `Scanner`:
 - `Risk` decides exposure severity and friction separately.
 - `Hackability` weighs evidence and returns `nil` when there is none.
 - `Report` never sees an HTTP response, only a `ScanResult`.
+- `Poc::Runner` owns the authorized attack phases; `Poc::Transport` is the
+  only POC socket; `Poc::Presenter` only prints the result. The POC is never
+  called from a machine-readable report.
 
 ---
 

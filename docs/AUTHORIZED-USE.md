@@ -39,8 +39,10 @@ terms of service, or both.
   User-Agent for hosts whose bot protection rejects the identifying string.
   It is not automatic and it is not a licence to bypass an authorization
   boundary.
-- No POST, no payloads, no fuzzing, no authentication bypass, no rate-limit
-  evasion.
+- No POST or payloads during the scan itself.
+- The authorized POC, only after an interactive exposed-host `y` answer:
+  raw POST/multipart requests, memory exhaustion and worker rotation. It can
+  disrupt the target and is calibrated for the bookworm PHP 8.4.26 lab build.
 
 ## What it does not authorize
 
@@ -48,24 +50,37 @@ terms of service, or both.
   a control. `--browser-ua` is for bot-protection compatibility where the
   program permits it, not for crossing an authorization boundary.
 - Authenticated testing without separate authorization.
-- Exploitation, persistence, data exfiltration or lateral movement.
+- Running the POC against military, government, critical infrastructure or any
+  host outside your written authorization.
+- Persistence, data exfiltration or lateral movement beyond the POC's
+  `id>/out/p1` proof.
 - Scanning an origin discovered behind a CDN unless the origin is in scope.
 - Treating a `no_php` or `patched` result as permission to stop caring about
   the rest of the estate.
 
+## The POC prompt
+
+After the scan, if the verdict is `vulnerable` or `eol`, an interactive text
+session asks:
+
+```text
+  AUTHORIZED PENETRATION TEST
+  Detected PHP 8.4.26. The lab POC is calibrated for PHP 8.4.26 (bookworm).
+  This host is exposed. Proceed with the authorized penetration test? [y/N]
+```
+
+Answering `n` exits. Answering `y` prints the authorized-use warning and runs
+the POC. There is no POC flag. Machine-readable output, `--quiet`, `--output`
+and non-interactive sessions cannot answer the question, so they never run it.
+
+The POC writes `/out/p1` on the target and reads `./out/p1` locally; the lab
+must share that directory. It uses a direct socket and fails closed if
+`--proxy`, `--basic-auth`, `--bearer` or `--cookie` is set. Exit code `2`
+still means the host is exposed even when the operator answers `n`.
+
 If a target blocks the scanner, the report says `BLOCKED`. That is the correct
 answer. Do not "fix" it by bypassing the block unless the program explicitly
 authorizes that vantage point.
-
-## Automated follow-up
-
-After a text report, the scanner can ask whether to run safe follow-up checks:
-a fresh response, the captured TLS/DNS data and a SARIF export. These are
-read-only and stay on the same target.
-
-A browser-compatible retry and active tools such as `nuclei` require
-`--authorized`. The prompt is a convenience, not a permission slip: the
-program scope and rules of engagement still decide whether either is allowed.
 
 ## Bug bounty notes
 

@@ -707,6 +707,95 @@ module PHP2ShellPOC2026
       "data.actions.scope.label" => "下次运行时强制执行范围",
       "data.actions.scope.why" => "目标不在授权列表内时失败关闭（退出码 4）。",
 
+      # -- authorized POC -----------------------------------------------------
+      "data.poc.warning_title" => "仅限授权使用",
+      "data.poc.disclaimer" =>
+        "请勿使用本扫描器或 POC 攻击军事、政府、关键基础设施，或任何你不拥有、也未获得明确书面授权测试的系统。" \
+        "未经授权访问是违法的。\n\n" \
+        "本 POC 会触发内存耗尽和工作进程轮换，可能中断目标服务。它针对 bookworm PHP 8.4.26 实验环境校准，" \
+        "在其他构建上可能失败。\n\n" \
+        "作者与贡献者不对任何损害、滥用或法律后果承担责任。继续即表示你确认已获得授权，并对自己的行为承担全部责任。",
+      "data.poc.consent.title" => "授权渗透测试",
+      "data.poc.consent.detected" =>
+        "检测到 PHP %{version}。实验 POC 针对 PHP 8.4.26（bookworm）校准。",
+      "data.poc.consent.unknown" =>
+        "实验 POC 针对 PHP 8.4.26（bookworm）校准；当前版本未确认。",
+      "data.poc.consent.prompt" => "该主机存在暴露。是否继续执行授权渗透测试？[y/N] ",
+      "data.poc.presenter.confirmed_title" => "渗透测试 — 已确认",
+      "data.poc.presenter.result_success" =>
+        "结果：成功 — 证明命令已在目标上执行。",
+      "data.poc.presenter.proof" => "证据：%{proof}",
+      "data.poc.presenter.failed_title" => "渗透测试 — 失败",
+      "data.poc.presenter.result_failed" => "结果：失败 — 未观察到证明。",
+      "data.poc.presenter.reason" => "原因：%{reason}",
+      "data.poc.presenter.attempts" =>
+        "尝试：堆 %{heap}/3 · 库 %{library}/3 · 命令 %{command}/5",
+      "data.poc.presenter.duration" => "用时：%{duration}",
+      "data.poc.presenter.technical_title" => "技术细节：",
+      "data.poc.presenter.technical_status" => "状态：%{status}",
+      "data.poc.presenter.technical_error" => "错误码：%{error}",
+      "data.poc.presenter.technical_heap" => "堆锚点：%{value}",
+      "data.poc.presenter.technical_library" => "库基址：%{value}",
+      "data.poc.presenter.technical_carrier" => "载体地址：%{value}",
+      "data.poc.presenter.technical_system" => "system() 地址：%{value}",
+      "data.poc.presenter.technical_log_title" => "输出日志：",
+      "data.poc.presenter.unavailable" => "不可用",
+      "data.poc.runner.title" => "渗透测试",
+      "data.poc.runner.target" => "目标：%{target}",
+      "data.poc.runner.profile" => "配置：bookworm PHP 8.4.26 实验构建",
+      "data.poc.runner.proof_command" =>
+        "证明命令：%{command}（目标写入 /out/p1；实验环境将其共享为 ./out/p1）",
+      "data.poc.runner.offsets_missing" => "未找到 offsets 文件；使用 bookworm 默认值。",
+      "data.poc.runner.offsets_loaded" => "已从 %{path} 加载 offsets。",
+      "data.poc.runner.offsets_technical" =>
+        "偏移：system=0x%{system} destructor=0x%{destructor} carrier=0x%{carrier}",
+      "data.poc.runner.large_requests" => "POC 会发送大型 multipart 请求，可能需要数分钟。",
+      "data.poc.runner.worker_prepare" => "准备一个干净的工作进程",
+      "data.poc.runner.heap_step" => "堆布局",
+      "data.poc.runner.heap_detail" => "从会话 Cookie 测量 Zend 堆。",
+      "data.poc.runner.heap_attempt" => "堆尝试 %{attempt}/%{total}。",
+      "data.poc.runner.heap_success" => "已恢复堆锚点。",
+      "data.poc.runner.heap_technical" => "堆锚点：0x%{anchor}",
+      "data.poc.runner.heap_failure" => "堆泄露未返回可用锚点。",
+      "data.poc.runner.recycle_heap" => "回收工作进程后重试堆泄露",
+      "data.poc.runner.worker_library" => "为库地址泄露准备新工作进程",
+      "data.poc.runner.library_step" => "库基址",
+      "data.poc.runner.library_detail" => "从析构指针定位 libphp 映射。",
+      "data.poc.runner.library_attempt" => "库尝试 %{attempt}/%{total}。",
+      "data.poc.runner.library_success" => "已恢复库基址。",
+      "data.poc.runner.library_technical" => "库基址：0x%{anchor}",
+      "data.poc.runner.library_failure" => "库泄露未返回可用基址。",
+      "data.poc.runner.recycle_library" => "回收工作进程后重试库泄露",
+      "data.poc.runner.worker_command" => "为命令投递准备新工作进程",
+      "data.poc.runner.carrier_technical" => "载体地址=0x%{carrier} system 函数=0x%{system}",
+      "data.poc.runner.command_step" => "命令投递",
+      "data.poc.runner.command_detail" => "放置伪造结构并等待证明文件。",
+      "data.poc.runner.command_attempt" => "命令尝试 %{attempt}/%{total}。",
+      "data.poc.runner.request_failed" => "请求失败：%{error}",
+      "data.poc.runner.waiting_proof" => "等待证明文件……",
+      "data.poc.runner.proof_success" => "第 %{attempt} 次尝试观察到证明。",
+      "data.poc.runner.proof" => "证明：%{proof}",
+      "data.poc.runner.no_proof" => "第 %{attempt} 次尝试没有证明。",
+      "data.poc.runner.recycle_command" => "回收工作进程后重试命令",
+      "data.poc.runner.worker_default" => "回收 PHP 工作进程",
+      "data.poc.runner.reset_request" => "%{reason}：发送重置请求（约 %{size} MB）",
+      "data.poc.runner.session_warmup" => "发送会话预热请求",
+      "data.poc.runner.heap_warmup" => "发送堆塑造预热请求（约 %{size} MB）",
+      "data.poc.runner.heap_leak" => "发送堆泄露请求",
+      "data.poc.runner.library_warmup" => "发送库塑造预热请求（约 %{size} MB）",
+      "data.poc.runner.library_leak" => "发送库泄露请求",
+      "data.poc.runner.command_warmup" => "发送命令预热请求（约 %{size} MB）",
+      "data.poc.runner.command_send" => "发送伪造载体和证明命令",
+      "data.poc.runner.response_received" => "响应已收到，用时 %{seconds} 秒。",
+      "data.poc.runner.failure" => "POC 失败：%{error}",
+      "data.poc.error.proxy" => "POC 使用直连 socket，不支持 --proxy；请取消该参数",
+      "data.poc.error.credentials" =>
+        "POC 不转发凭据；请取消 --basic-auth、--bearer 或 --cookie",
+      "data.poc.failure.heap_leak_failed" => "堆泄露未返回可用锚点。",
+      "data.poc.failure.libphp_leak_failed" => "libphp 泄露未返回可用基址。",
+      "data.poc.failure.exploit_failed" =>
+        "命令已发送，但未出现证明；它可能已在无输出情况下执行。",
+
       # -- tooling ------------------------------------------------------------
       "data.tooling.subfinder.purpose" => "被动子域名枚举，带来源去重和解析检查。",
       "data.tooling.subfinder.relevance" =>

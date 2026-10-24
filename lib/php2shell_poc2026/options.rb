@@ -18,7 +18,7 @@ module PHP2ShellPOC2026
       paths scope exclude require_scope
       format output compact no_banner no_color evidence quiet
       redteam toolchain toolchain_full authorized verbose fail_on dry_run config
-      interactive yes locale
+      locale
     ].freeze
 
     PROFILES = %w[passive standard deep].freeze
@@ -69,8 +69,6 @@ module PHP2ShellPOC2026
         fail_on: "exposed",
         dry_run: false,
         config: nil,
-        interactive: true,
-        yes: false,
         locale: "en"
       }
     end
@@ -145,8 +143,6 @@ module PHP2ShellPOC2026
       self.authorized   = boolean(authorized)
       self.verbose      = boolean(verbose)
       self.dry_run      = boolean(dry_run)
-      self.interactive  = boolean(interactive)
-      self.yes          = boolean(yes)
 
       self.scope   = blank_to_nil(scope)
       self.exclude = blank_to_nil(exclude)

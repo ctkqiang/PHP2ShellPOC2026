@@ -194,14 +194,44 @@ same-host `.php` paths published by the site. Unsafe paths (logout, delete,
 checkout, admin-ajax, etc.) are filtered out. Everything is bounded by
 `--max-requests`.
 
-## What the tool does not do
+## What the scanner does not do
 
-- No POST, PUT, PATCH or DELETE.
-- No exploit payloads, fuzzing, malformed multipart bodies or parser stress.
+- No POST, PUT, PATCH or DELETE during the scan.
+- No exploit payloads, fuzzing, malformed multipart bodies or parser stress
+  during the scan.
 - No authentication bypass, WAF evasion or rate-limit evasion.
 - No directory brute-forcing.
 - No claim that a `no_php` result covers the whole estate.
 - No claim that a `patched` result covers configuration or application bugs.
+
+## Authorized POC
+
+The Ruby POC is a separate flow, not a scanner probe. It is reached only when
+the text-mode verdict is `vulnerable` or `eol` and the operator answers the
+single y/N question. There is no POC flag; machine-readable output, `--quiet`,
+`--output` and non-interactive sessions never run it.
+
+The implementation has three observable phases:
+
+1. **Heap anchor** — warm the worker, send the fragmented multipart body and
+   derive the 2 MB-aligned Zend heap anchor from the `PHPSESSID` cookie.
+2. **Library anchor** — send the crafted array layout and derive the libphp
+   mapping base from the cookie's `pDestructor` pointer.
+3. **Command delivery** — send the forged HashTable/execute_data/zend_string
+   carrier and the final reference, then read `out/p1`.
+
+It uses raw HTTP/1.1 over `Socket`/OpenSSL because the exploit depends on
+header order, exact multipart bytes and concurrent read-while-upload. The
+defaults are fixed: bookworm profile, 12 MB OOM field, 30 s request timeout,
+three heap/library attempts, five command attempts, `id>/out/p1` and a local
+`out/p1` proof. `out/offsets.env` is read if present; otherwise the
+bookworm/lab constants are used. There is no Docker auto-offset helper.
+
+The POC performs memory exhaustion and worker rotation. It is calibrated for
+the bookworm PHP 8.4.26 lab build, can disrupt the target, and a failed POC is
+not evidence that the host is patched. Its prompt, warning, progress lines and
+result card use the same language as the text report; technical offsets are
+shown only with `-v`.
 
 ## References
 
@@ -210,3 +240,4 @@ checkout, admin-ajax, etc.) are filtered out. Everything is bounded by
 - [CVE-2026-109619](https://www.cve.org/CVERecord?id=CVE-2026-109619)
 - [PHP release notes](https://www.php.net/releases/)
 - [docs/AUTHORIZED-USE.md](AUTHORIZED-USE.md)
+- [docs/POC.md](POC.md)

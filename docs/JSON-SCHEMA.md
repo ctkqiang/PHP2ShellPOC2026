@@ -4,6 +4,10 @@ The JSON report is a stable envelope. The schema version is separate from the
 gem version: adding fields is backward-compatible; removing or renaming one
 requires a schema bump.
 
+The authorized POC is not part of this envelope. It requires an interactive
+y/N answer and a text terminal, so it never runs for JSON, SARIF, CSV or
+NDJSON. See [POC.md](POC.md).
+
 ```json
 {
   "schema_version": "3.0",

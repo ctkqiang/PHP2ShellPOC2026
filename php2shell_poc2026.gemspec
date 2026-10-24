@@ -8,12 +8,13 @@ Gem::Specification.new do |spec|
   spec.authors  = ["PHP2ShellPOC2026 Contributors"]
   spec.license  = "MIT"
 
-  spec.summary       = "Passive PHP2Shell exposure analyzer and ATT&CK-mapped triage report"
+  spec.summary       = "PHP2Shell exposure analyzer with an authorized lab POC"
   spec.description   = "Fingerprints the PHP interpreter behind a web endpoint, classifies edge blocks " \
                        "and soft-404s honestly, weighs exposure separately from exploit friction, maps " \
                        "findings onto MITRE ATT&CK and hands the blue team detection opportunities. " \
-                       "Ordinary GET requests only — no payloads, no exploitation, safe to point at " \
-                       "hosts you are authorized to assess."
+                       "The scanner sends ordinary GET requests. When an interactive scan finds an " \
+                       "exposed host, it asks once whether to run the authorized Ruby POC; there is no " \
+                       "POC flag, and the POC is only for hosts you are authorized to test."
   spec.homepage      = PHP2ShellPOC2026::HOMEPAGE
   spec.metadata = {
     "homepage_uri"          => spec.homepage,
@@ -32,6 +33,7 @@ Gem::Specification.new do |spec|
     "bin/*",
     "docs/**/*.md",
     "README.md",
+    "README_zh.md",
     "CHANGELOG.md",
     "LICENSE"
   ].reject { |path| File.directory?(path) }

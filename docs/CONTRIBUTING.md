@@ -5,9 +5,12 @@ small, dependency-free and conservative about what it sends.
 
 ## Ground rules
 
-- **No exploit code.** This repository is a passive triage tool. Do not add
-  payloads, fuzzers, authentication bypasses, WAF evasion or state-changing
-  requests.
+- **Exploit code is confined to the POC module.** The scanner is passive; the
+  only POST/payload path lives under `lib/php2shell_poc2026/poc/` and runs
+  only after the exposed-host y/N prompt. Do not add fuzzers, authentication
+  bypasses, WAF evasion, persistence or state-changing requests elsewhere.
+- **No POC flags.** The POC is enabled by the post-scan y/N answer, not by a
+  command-line switch. Keep the machine-readable formats free of prompts.
 - **No unbounded scanning.** New probes must respect `--max-requests`,
   `--delay`, `--threads` and the adaptive early-exit model.
 - **Evidence first.** A new verdict or signal needs a test with a fake
@@ -42,7 +45,9 @@ Coverage expectations for a change:
 - transport change: a local-server test in `test/http_client_test.rb`;
 - report change: a format test in `test/report_test.rb`;
 - CLI/scope/config change: a dry-run test in `test/cli_test.rb`;
-- parsing/IDN/scope change: a unit test in the relevant `*_test.rb`.
+- parsing/IDN/scope change: a unit test in the relevant `*_test.rb`;
+- POC change: a deterministic helper or local-TCP test in `test/poc_test.rb`.
+  Never point the POC at a live target from the test suite.
 
 Tests must not depend on external DNS, the public internet, or the current
 date/time.
@@ -50,6 +55,8 @@ date/time.
 ## Style
 
 - Ruby standard library only at runtime.
+- Human-readable POC text uses `I18n` keys under `data.poc.*`; missing
+  translations fall back to English. Machine formats stay English.
 - Prefer small, pure modules for enrichment (verdict/environment in, records
   out).
 - Keep `Scanner` as orchestration; do not put rendering or policy in it.

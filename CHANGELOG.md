@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — readability and localization pass
+## Unreleased — decision report, block-page handling and authorized POC
 
 - Each target now gets a `DECISION` card that answers the question the scan
   exists to answer — *can this host be hacked by PHP2Shell?* — as
@@ -17,12 +17,18 @@
   `answer` and `decision_action`; SARIF result properties and messages carry
   the same decision. Chinese translations cover the card, the answer words
   and the actions.
-- After a text report on an interactive terminal, the tool asks whether to
-  run safe follow-up checks: a fresh response with a neutral User-Agent, the
-  captured TLS/DNS data and a SARIF export. `--yes` skips the question,
-  `--no-interactive` disables it, and machine formats/quiet mode never prompt.
-  The browser-UA retry and active `nuclei` check stay behind `--authorized`;
-  the follow-up result is included in the exit code.
+- After a text-mode scan finds an exposed host, the tool asks one y/N question
+  and, on `y`, prints the authorized-use warning before running the Ruby lab
+  POC. There is no POC flag. The POC uses raw HTTP/1.1 and preserves the lab
+  POC's multipart layout, heap/library leak math, offsets, retries, worker
+  rotation and `out/p1` proof, and is isolated under
+  `lib/php2shell_poc2026/poc/`. Its prompt, warning, progress lines and result
+  card follow the text report language. Every run ends with an explicit
+  `RESULT: SUCCESS` or `RESULT: FAILED`; `-v` adds the technical addresses and
+  the recorded output log. See [docs/POC.md](docs/POC.md).
+- Added a Simplified Chinese README (`README_zh.md`) covering the scanner,
+  the authorized POC prompt, localization, safety properties and the POC
+  limitations.
 - The default text report is now plain language: a `HACKABLE?` findings
   column, a `DECISION` card, a `WHAT THIS MEANS` card and two next steps.
   Scores, ratios, SAPI names, ATT&CK, defender checks, the evidence table and

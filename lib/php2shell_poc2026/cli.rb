@@ -8,8 +8,8 @@ require "yaml"
 
 require_relative "errors"
 require_relative "i18n"
-require_relative "next_steps_runner"
 require_relative "options"
+require_relative "poc"
 require_relative "rate_limiter"
 require_relative "report"
 require_relative "sanitize"
@@ -62,9 +62,9 @@ module PHP2ShellPOC2026
             EXIT_OK
           else
             results = scan_all(work)
-            meta = render_report(results, scope)
-            followup = maybe_run_next_steps(results, meta)
-            exit_code(results, followup)
+            render_report(results, scope)
+            maybe_run_poc(results)
+            exit_code(results)
           end
         rescue ScopeError => e
           warn "php2shell-poc2026: scope violation: #{e.message}"
@@ -97,9 +97,9 @@ module PHP2ShellPOC2026
         o.banner = <<~BANNER
           Usage: php2shell-poc2026 [options] URL [URL ...]
 
-          Passive PHP2Shell exposure triage. Ordinary GET requests only; no payloads,
-          no exploitation, no state-changing verbs. Only scan assets you are authorized
-          to assess.
+          PHP2Shell exposure triage. The scan sends ordinary GET requests. After an
+          exposed verdict in an interactive text session, it asks once before running
+          the authorized lab POC. Only scan assets you are authorized to assess.
         BANNER
 
         o.separator ""
@@ -169,8 +169,6 @@ module PHP2ShellPOC2026
         end
         o.on("--fail-on MODE", Options::FAIL_ON,
              "exposed (default), inconclusive, any or never") { |v| @cli[:fail_on] = v }
-        o.on("--no-interactive", "Do not ask to run safe follow-up checks") { @cli[:interactive] = false }
-        o.on("--yes", "Run safe follow-up checks without asking") { @cli[:yes] = true }
         o.on("--dry-run", "Print the request plan and exit without opening a socket") { @cli[:dry_run] = true }
         o.on("-C", "--config FILE", "Load defaults from a YAML config file") { |v| @cli[:config] = v }
 
@@ -362,18 +360,34 @@ module PHP2ShellPOC2026
       meta
     end
 
-    # The report is advisory; this is the "proceed?" step. Only text reports
-    # on an interactive terminal ask. Machine formats, files, quiet mode and
-    # dry runs never prompt.
-    def maybe_run_next_steps(results, meta)
+    # The only post-scan question: if a target is exposed, offer the
+    # authorized POC. There is no flag and no second prompt. Machine output
+    # and non-interactive sessions cannot answer, so they never run it.
+    def maybe_run_poc(results)
       return nil unless @options.format == "text"
-      return nil if @options.quiet || @options.dry_run
-      return nil if @options.output && !@options.yes
-      return nil unless @options.interactive || @options.yes
-      return nil unless @options.yes || $stdout.tty?
+      return nil if @options.quiet || @options.dry_run || @options.output
+      return nil unless $stdout.tty?
 
+      exposed = results.find(&:exposed?)
+      return nil unless exposed
+
+      console = Poc::Console.new(options: @options, out: $stdout)
       $stdout.flush
-      NextStepsRunner.run(results, @options, meta: meta, input: $stdin, out: $stdout)
+      return nil unless Poc.consent(input: $stdin, out: $stdout,
+                                    detected_version: exposed.verdict.version,
+                                    console: console)
+
+      console.warning(Poc.disclaimer)
+      result = Poc::Runner.new(exposed.target, options: @options,
+                                                out: $stdout, console: console).call
+      Poc::Presenter.new(result, options: @options, out: $stdout, console: console).render
+      result
+    rescue Poc::Error => e
+      warn "php2shell-poc2026: POC: #{e.message}"
+      nil
+    rescue StandardError => e
+      warn "php2shell-poc2026: POC failed: #{e.class}: #{e.message}"
+      nil
     end
 
     def render_plan(work, scope)
@@ -442,12 +456,11 @@ module PHP2ShellPOC2026
       end
     end
 
-    def exit_code(results, followup = nil)
-      all = results + Array(followup)
-      return EXIT_ERROR if all.any?(&:error)
+    def exit_code(results)
+      return EXIT_ERROR if results.any?(&:error)
 
-      exposed    = all.any?(&:exposed?)
-      unverified = all.any?(&:unverified?)
+      exposed    = results.any?(&:exposed?)
+      unverified = results.any?(&:unverified?)
 
       case @options.fail_on
       when "never"

@@ -41,6 +41,14 @@ Mitigations:
 - `--require-scope` fails before any socket is opened.
 - Body excerpts are opt-in (`--evidence`) and remain target-controlled data.
 
+## POC output
+
+The POC proof and journal are target-controlled data. They are sanitised with
+`Sanitize.terminal` before printing. The POC runs only after the interactive
+exposed-host `y` answer; it never runs from JSON/SARIF/CSV/NDJSON, `--quiet`,
+or a non-interactive session. The POC uses a direct socket and fails closed if
+`--proxy`, `--basic-auth`, `--bearer` or `--cookie` is set.
+
 ## Credentials
 
 - Prefer a dedicated, least-privilege credential for authorized authenticated
