@@ -7,6 +7,8 @@ require "time"
 require "yaml"
 
 require_relative "errors"
+require_relative "i18n"
+require_relative "next_steps_runner"
 require_relative "options"
 require_relative "rate_limiter"
 require_relative "report"
@@ -60,8 +62,9 @@ module PHP2ShellPOC2026
             EXIT_OK
           else
             results = scan_all(work)
-            render_report(results, scope)
-            exit_code(results)
+            meta = render_report(results, scope)
+            followup = maybe_run_next_steps(results, meta)
+            exit_code(results, followup)
           end
         rescue ScopeError => e
           warn "php2shell-poc2026: scope violation: #{e.message}"
@@ -125,6 +128,9 @@ module PHP2ShellPOC2026
         end
         o.on("--cookie STRING", "Cookie header value") { |v| @cli[:cookie] = v }
         o.on("-A", "--user-agent STRING", "User-Agent override") { |v| @cli[:user_agent] = v }
+        o.on("--browser-ua", "Use a browser-compatible User-Agent (may bypass bot blocks; authorized use only)") do
+          @cli[:browser_ua] = true
+        end
         o.on("--proxy URL", "HTTP proxy, e.g. http://127.0.0.1:8080") { |v| @cli[:proxy] = v }
         o.on("--no-proxy", "Ignore HTTP(S)_PROXY/ALL_PROXY environment variables") { @cli[:no_proxy] = true }
         o.on("--basic-auth USER:PASS", "HTTP Basic authentication (same-origin requests only)") { |v| @cli[:basic_auth] = v }
@@ -147,15 +153,24 @@ module PHP2ShellPOC2026
         o.on("-o", "--output FILE", "Write the report to FILE instead of stdout") { |v| @cli[:output] = v }
         o.on("--compact", "Compact JSON instead of pretty-printing") { @cli[:compact] = true }
         o.on("--no-banner", "Suppress the report banner") { @cli[:no_banner] = true }
-        o.on("--no-color", "Disable colour output (currently colour-free by default)") { @cli[:no_color] = true }
+        o.on("--no-color", "Disable colour output (also honours NO_COLOR; piped output is plain)") { @cli[:no_color] = true }
         o.on("--evidence", "Include a short body excerpt in JSON/NDJSON evidence") { @cli[:evidence] = true }
-        o.on("-q", "--quiet", "Only the summary table and run summary in text mode") { @cli[:quiet] = true }
-        o.on("-r", "--redteam", "Include red-team attacker-perspective notes") { @cli[:redteam] = true }
-        o.on("-c", "--toolchain", "Include the relevant toolchain catalogue") { @cli[:toolchain] = true }
-        o.on("--toolchain-full", "Include every toolchain entry, not just relevant ones") { @cli[:toolchain_full] = true }
-        o.on("-v", "--verbose", "Trace requests and responses; include the trace in reports") { @cli[:verbose] = true }
+        o.on("-q", "--quiet", "Bottom line, findings table and run summary only") { @cli[:quiet] = true }
+        o.on("-r", "--redteam", "Include attacker notes") { @cli[:redteam] = true }
+        o.on("-c", "--toolchain", "Include relevant tools") { @cli[:toolchain] = true }
+        o.on("--toolchain-full", "Include all tools with reasons") { @cli[:toolchain_full] = true }
+        o.on("-v", "--verbose", "Add technical details, attack-path notes, defender checks and request trace") do
+          @cli[:verbose] = true
+        end
+        o.on("-en", "English text report (short for --lang en)") { @cli[:locale] = "en" }
+        o.on("-zh", "Chinese text report (short for --lang zh)") { @cli[:locale] = "zh" }
+        o.on("--lang LOCALE", "Text report language: auto, en or zh (default: device language)") do |v|
+          @cli[:locale] = v
+        end
         o.on("--fail-on MODE", Options::FAIL_ON,
              "exposed (default), inconclusive, any or never") { |v| @cli[:fail_on] = v }
+        o.on("--no-interactive", "Do not ask to run safe follow-up checks") { @cli[:interactive] = false }
+        o.on("--yes", "Run safe follow-up checks without asking") { @cli[:yes] = true }
         o.on("--dry-run", "Print the request plan and exit without opening a socket") { @cli[:dry_run] = true }
         o.on("-C", "--config FILE", "Load defaults from a YAML config file") { |v| @cli[:config] = v }
 
@@ -184,9 +199,17 @@ module PHP2ShellPOC2026
 
       merged = config.merge(@cli)
       merged.delete(:config)
+      merged[:locale] = detect_locale if merged[:locale].nil? || merged[:locale].to_s.strip.empty? ||
+                                          merged[:locale].to_s.strip.downcase == "auto"
       @options = Options.new(**merged)
       @options.config = @cli[:config] && File.expand_path(@cli[:config])
       @options.validate!
+
+      # Localisation is deliberately limited to the human-readable text
+      # report. Machine formats keep their canonical English messages so a
+      # Chinese workstation cannot silently change a JSON/SARIF contract.
+      @options.locale = "en" unless @options.format == "text"
+      I18n.locale = @options.locale
 
       if @options.require_scope && @options.scope.nil?
         raise UsageError, "--require-scope needs --scope FILE"
@@ -196,6 +219,10 @@ module PHP2ShellPOC2026
       end
 
       @rate_limiter = RateLimiter.new(@options.delay_ms)
+    end
+
+    def detect_locale
+      I18n.detect
     end
 
     def load_config(path)
@@ -332,6 +359,21 @@ module PHP2ShellPOC2026
       }
       output = Report.render(results, @options, meta: meta)
       write_output(output)
+      meta
+    end
+
+    # The report is advisory; this is the "proceed?" step. Only text reports
+    # on an interactive terminal ask. Machine formats, files, quiet mode and
+    # dry runs never prompt.
+    def maybe_run_next_steps(results, meta)
+      return nil unless @options.format == "text"
+      return nil if @options.quiet || @options.dry_run
+      return nil if @options.output && !@options.yes
+      return nil unless @options.interactive || @options.yes
+      return nil unless @options.yes || $stdout.tty?
+
+      $stdout.flush
+      NextStepsRunner.run(results, @options, meta: meta, input: $stdin, out: $stdout)
     end
 
     def render_plan(work, scope)
@@ -400,11 +442,12 @@ module PHP2ShellPOC2026
       end
     end
 
-    def exit_code(results)
-      return EXIT_ERROR if results.any?(&:error)
+    def exit_code(results, followup = nil)
+      all = results + Array(followup)
+      return EXIT_ERROR if all.any?(&:error)
 
-      exposed    = results.any?(&:exposed?)
-      unverified = results.any?(&:unverified?)
+      exposed    = all.any?(&:exposed?)
+      unverified = all.any?(&:unverified?)
 
       case @options.fail_on
       when "never"

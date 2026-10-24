@@ -17,6 +17,19 @@ class CliTest < Minitest::Test
     $stderr = old_err
   end
 
+  def run_cli_instance(*args)
+    old_out = $stdout
+    old_err = $stderr
+    $stdout = StringIO.new
+    $stderr = StringIO.new
+    cli = PHP2ShellPOC2026::CLI.new(args)
+    code = cli.run
+    [cli, code, $stdout.string, $stderr.string]
+  ensure
+    $stdout = old_out
+    $stderr = old_err
+  end
+
   def test_dry_run_opens_no_socket
     code, out, err = run_cli("--dry-run", "https://192.0.2.10/")
     assert_equal 0, code
@@ -45,6 +58,83 @@ class CliTest < Minitest::Test
     assert_equal 0, code
     assert_includes out, "Usage: php2shell-poc2026"
     assert_includes out, "--fail-on"
+    assert_includes out, "--lang"
+    assert_includes out, "-en"
+    assert_includes out, "-zh"
+    assert_includes out, "--browser-ua"
+    assert_includes out, "--yes"
+    assert_includes out, "--no-interactive"
+  end
+
+  def test_lang_flag_sets_text_locale
+    cli, code, out, err = run_cli_instance("--dry-run", "--lang", "zh", "https://192.0.2.10/")
+    assert_equal 0, code
+    assert_empty err
+    assert_equal "zh", cli.instance_variable_get(:@options).locale
+    assert_includes out, "dry-run request plan"
+  end
+
+  def test_en_short_flag_sets_english_locale
+    cli, code, _out, err = run_cli_instance("--dry-run", "-en", "https://192.0.2.10/")
+    assert_equal 0, code
+    assert_empty err
+    assert_equal "en", cli.instance_variable_get(:@options).locale
+  end
+
+  def test_zh_short_flag_sets_chinese_locale
+    cli, code, _out, err = run_cli_instance("--dry-run", "-zh", "https://192.0.2.10/")
+    assert_equal 0, code
+    assert_empty err
+    assert_equal "zh", cli.instance_variable_get(:@options).locale
+  end
+
+  def test_short_language_flag_overrides_device_locale
+    previous = ENV["PHP2SHELL_LANG"]
+    ENV["PHP2SHELL_LANG"] = "zh_CN.UTF-8"
+    cli, code, = run_cli_instance("--dry-run", "-en", "https://192.0.2.10/")
+    assert_equal 0, code
+    assert_equal "en", cli.instance_variable_get(:@options).locale
+  ensure
+    ENV["PHP2SHELL_LANG"] = previous
+  end
+
+  def test_browser_ua_flag_sets_compatibility_user_agent
+    cli, code, _out, err = run_cli_instance("--dry-run", "--browser-ua", "https://192.0.2.10/")
+    assert_equal 0, code
+    assert_empty err
+    opts = cli.instance_variable_get(:@options)
+    assert opts.browser_ua
+    assert_includes opts.user_agent, "Mozilla/5.0"
+  end
+
+  def test_no_interactive_and_yes_flags_set_options
+    cli, code, = run_cli_instance("--dry-run", "--no-interactive", "https://192.0.2.10/")
+    assert_equal 0, code
+    refute cli.instance_variable_get(:@options).interactive
+
+    cli, code, = run_cli_instance("--dry-run", "--yes", "https://192.0.2.10/")
+    assert_equal 0, code
+    assert cli.instance_variable_get(:@options).yes
+  end
+
+  def test_lang_auto_detects_device_locale
+    previous = ENV["PHP2SHELL_LANG"]
+    ENV["PHP2SHELL_LANG"] = "zh_CN.UTF-8"
+    cli, code, = run_cli_instance("--dry-run", "https://192.0.2.10/")
+    assert_equal 0, code
+    assert_equal "zh", cli.instance_variable_get(:@options).locale
+  ensure
+    ENV["PHP2SHELL_LANG"] = previous
+  end
+
+  def test_machine_formats_force_english_locale
+    cli, code, out, err = run_cli_instance(
+      "--dry-run", "--format", "json", "--lang", "zh", "https://192.0.2.10/"
+    )
+    assert_equal 0, code
+    assert_empty err
+    assert_equal "en", cli.instance_variable_get(:@options).locale
+    assert_equal "en", JSON.parse(out)["options"]["locale"]
   end
 
   def test_require_scope_fails_closed_with_exit_4
