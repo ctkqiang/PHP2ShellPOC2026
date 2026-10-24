@@ -1,8 +1,10 @@
 # PHP2ShellPOC2026
 
 Passive exposure triage for the **PHP2Shell** bug class (CVE-2026-109618 and
-CVE-2026-109619). Point it at a web endpoint and it answers four questions in
-one report:
+CVE-2026-109619). The headline answer is the decision the operator needs —
+**can this host be hacked by PHP2Shell: YES, NO or UNKNOWN** — followed by the
+evidence, the caveats and the action that follows. Point it at a web endpoint
+and it answers four questions in one report:
 
 1. **What is actually answering?** PHP version, SAPI, edge, CDN, WAF, framework.
 2. **Is the interpreter exposed?** Below the branch fix level, end-of-life,
@@ -95,21 +97,62 @@ php2shell --profile passive https://example.com/
 php2shell https://example.com/
 
 # Deep: common PHP paths, framework paths, robots.txt and sitemap.xml discovery
+php2shell -d https://example.com/
+
+# Deep + expert appendix: technical detail, attacker notes and tools
 php2shell -d -r -c -v https://example.com/
+
+# Ask after the report whether to run the safe follow-up checks
+php2shell https://example.com/
+
+# Run the safe follow-up checks without asking
+php2shell --yes https://example.com/
+
+# Also allow the authorized browser-UA retry and active nuclei prompt
+php2shell --authorized --yes https://example.com/
 
 # Machine-readable report
 php2shell --json https://example.com/ > report.json
 
 # Plan first; no socket is opened
 php2shell --dry-run --profile deep https://example.com/
+
+# Chinese text report; omit the language flag to follow the device locale
+php2shell --lang zh https://example.com/
+php2shell -zh https://example.com/     # same thing, shorter
+php2shell -en https://example.com/     # force English
 ```
 
-The default text report is a dashboard: a findings table, a one-line bottom
-line, one assessment card per target, an evidence table, compact ATT&CK and
-detection sections, and numbered next actions. `-v` expands full ATT&CK notes,
-detection detail and technical signals; `-c` adds the toolchain; `-r` adds
-red-team notes. `--quiet` keeps only the findings table, bottom line and run
-summary.
+The default text report is deliberately short. The bottom line answers the
+question the scan exists to answer — *can this host be hacked by PHP2Shell?* —
+as `YES` / `UNKNOWN` / `NO` with the one next step that follows from it. Then
+a findings table with a plain `HACKABLE?` column, and per host: a `DECISION`
+card, a `WHAT THIS MEANS` card (result, why, confidence, evidence, PHP version
+and fix), and the two most useful next steps. `-v` adds the technical details,
+pages checked, attack-path notes, defender checks, all next steps, the full
+fix list and the request trace. `-c` adds tools, `--toolchain-full` adds the
+reasoning and lower-priority entries, `-r` adds attacker notes, and `--quiet`
+keeps only the bottom line, findings table and run summary.
+
+After a text report on an interactive terminal, the tool asks whether to run
+the safe follow-up checks: a fresh response, the captured TLS/DNS data and a
+SARIF export. `--yes` skips the question; `--no-interactive` disables it. The
+browser-UA retry and active tools are only offered with `--authorized`.
+
+Colour is used only when stdout is a terminal; redirected output, `--output`,
+`NO_COLOR` and `--no-color` stay plain.
+
+The text report follows the device language: Simplified Chinese when the
+system locale is `zh*` (for example `zh_CN.UTF-8` or macOS `zh-Hans-CN`),
+English otherwise. `--lang en`, `--lang zh`, `-en` and `-zh` override
+detection, and `PHP2SHELL_LANG` does the same without a flag. Resolution order
+is the language flag, `PHP2SHELL_LANG`, `LC_ALL`, `LC_MESSAGES`, `LANGUAGE`,
+`LANG`, then the macOS user locale; unsupported languages fall back to
+English. Width, wrapping and table alignment are computed with CJK characters
+counted as two columns, and closing punctuation is kept off the start of a
+line. Machine
+formats (`json`, `markdown`, `sarif`, `csv`, `ndjson`) always keep English
+messages so their contracts stay stable.
 
 ---
 
@@ -143,6 +186,23 @@ Adaptive mode stops after the controls for blocked, auth-wall, rate-limited,
 soft-404, server-error and unreachable results. `--no-adaptive` forces the
 full probe set when you have a reason to.
 
+### 2b. Block-page fingerprinting
+
+A denial page is still evidence about the edge. The scanner recognises common
+block pages — OVHcloud, Cloudflare, Akamai, Sucuri, Imperva, AWS WAF, F5,
+Wordfence and ModSecurity — and reports the vendor plus the message the page
+showed. If the block is likely User-Agent-sensitive, the report says so and
+offers an explicit retry:
+
+```sh
+php2shell --browser-ua https://example.com/
+```
+
+`--browser-ua` is never automatic. It sends a browser-compatible
+`User-Agent`, which can cross a bot-control boundary, so the report labels the
+mode and the operator must confirm authorization. The default remains the
+identifying `php2shell-poc2026` User-Agent.
+
 ### 3. Version evidence
 
 Version is read from, in order:
@@ -153,8 +213,28 @@ Version is read from, in order:
   version context, never as the PHP patch level.
 
 A branch-only value such as `8.2` is reported as `UNVERIFIED` / `branch_only`,
-not silently upgraded to a patch-level claim. A version observed on a blocked
-or error response is reported with low confidence and a caveat.
+not silently upgraded to a patch-level claim. A branch-only value on an
+end-of-life branch such as `8.1`, `8.0` or `7.4` is already `END-OF-LIFE`,
+because no patch level on that branch carries a fix. A version observed on a
+blocked or error response is reported with low confidence and a caveat.
+
+### 3b. Why a host can be `UNKNOWN`
+
+Most modern sites hide `X-Powered-By` and do not expose the PHP patch level.
+The scanner will not guess a version from a CMS name, a cookie or a marketing
+page. If PHP is present but the version is hidden, the report says
+`UNKNOWN` / `PHP present, version hidden` — not `YES` and not `NO`.
+
+You can check the header yourself before scanning:
+
+```sh
+curl -sSI https://example.com/ | grep -i 'x-powered-by\|^server'
+```
+
+If the response contains `X-Powered-By: PHP/x.y.z`, the scanner can decide. If
+it does not, the patch level has to come from the host or a diagnostic page
+you are authorized to read. A `NO` would be a lie, so the tool does not print
+one.
 
 ### 4. Verdicts
 
@@ -195,7 +275,12 @@ WAF changes exploitation likelihood, not patch state.
 
 `hackability` weighs the observed signals. When positive + negative evidence
 is zero, `ratio` is `null` and the rating is `INCONCLUSIVE` — never `0.00` /
-`NOT EXPOSED`.
+`NOT EXPOSED`. Each result also carries the decision a human can act on:
+`answer` (`yes` / `no` / `unknown`, where `LIKELY` answers `yes` because the
+burden is on disproving exposure) and `action` (the one sentence of advice
+that follows from that answer). The JSON report exposes both fields under
+`results.<target>.hackability`, and the text and Markdown reports print them
+as the `DECISION` card.
 
 ### 6. ATT&CK and enrichment
 
@@ -291,6 +376,7 @@ Usage: php2shell-poc2026 [options] URL [URL ...]
 | `-H`, `--header "Name: value"` | Extra header (repeatable) |
 | `--cookie STRING` | Cookie header |
 | `-A`, `--user-agent STRING` | User-Agent override |
+| `--browser-ua` | Browser-compatible User-Agent for bot-protection compatibility (authorized only) |
 | `--proxy URL` | HTTP proxy |
 | `--no-proxy` | Ignore proxy environment variables |
 | `--basic-auth USER:PASS` | Basic auth, same-origin only |
@@ -313,16 +399,20 @@ Usage: php2shell-poc2026 [options] URL [URL ...]
 |---|---|
 | `-f`, `--format FORMAT` | `text`, `json`, `markdown`, `sarif`, `csv`, `ndjson` |
 | `-j`, `--json` | Alias for `--format json` |
+| `--lang LOCALE` | Text report language: `auto` (device language, default), `en` or `zh` |
+| `-en` / `-zh` | Short forms of `--lang en` / `--lang zh` |
 | `-o`, `--output FILE` | Write to a file; `-` means stdout |
 | `--compact` | Compact JSON |
 | `--no-banner` | Suppress the banner |
-| `--no-color` | Colour-free output (default) |
+| `--no-color` | Disable colour (colour is automatic on a TTY; honours `NO_COLOR`) |
 | `--evidence` | Body excerpt in JSON/NDJSON |
-| `-q`, `--quiet` | Summary table + run summary only (text) |
-| `-r`, `--redteam` | Red-team notes |
-| `-c`, `--toolchain` | Relevant toolchain catalogue |
-| `--toolchain-full` | Full catalogue |
-| `-v`, `--verbose` | Request trace |
+| `-q`, `--quiet` | Bottom line, findings table and run summary only (text) |
+| `-r`, `--redteam` | Attacker notes |
+| `-c`, `--toolchain` | Relevant tools |
+| `--toolchain-full` | All tools with reasons |
+| `-v`, `--verbose` | Technical details, attack-path notes, defender checks, all actions and the request trace |
+| `--no-interactive` | Do not ask to run safe follow-up checks |
+| `--yes` | Run safe follow-up checks without asking (text reports only) |
 | `--fail-on MODE` | `exposed`, `inconclusive`, `any`, `never` |
 | `--dry-run` | Print the request plan; no socket |
 | `-C`, `--config FILE` | YAML defaults |
@@ -435,7 +525,15 @@ php2shell --fail-on inconclusive --format json https://example.com/
 - **Target data is untrusted.** Headers, titles, bodies and paths are
   sanitised for ANSI/OSC/control/bidi before they reach a terminal or a
   Markdown/CSV cell.
-- **No silent scanning.** The User-Agent identifies the tool and the project.
+- **No silent scanning.** The User-Agent identifies the tool and the project
+  by default.
+- **Browser-UA mode is opt-in.** `--browser-ua` can cross a bot-control
+  boundary, so it is never automatic, the report labels the mode, and the
+  operator must confirm authorization first.
+- **Follow-up automation is read-only by default.** The post-report prompt
+  runs a fresh response check, the captured TLS/DNS data and a SARIF export.
+  The browser-UA retry and active tools require `--authorized`; the prompt is
+  not a permission slip.
 - **No exploit code.** If you need exploitation, use an authorized,
   purpose-built framework under a separate approval — this repository is not
   one.
@@ -456,6 +554,7 @@ lib/php2shell_poc2026/
   risk.rb                exposure score + friction
   hackability.rb         signed evidence ratio (nil when no evidence)
   environment.rb         edge / CDN / WAF / hosting / SAPI / framework
+  block_page.rb          OVHcloud/Cloudflare/Akamai/... block-page fingerprints
   report/                text, JSON, Markdown, SARIF, CSV, NDJSON
   scope.rb, target.rb, idn.rb, sanitize.rb, options.rb
   attack.rb, detections.rb, remediation.rb, tooling.rb, next_actions.rb

@@ -1,5 +1,86 @@
 # Changelog
 
+## Unreleased — readability and localization pass
+
+- Each target now gets a `DECISION` card that answers the question the scan
+  exists to answer — *can this host be hacked by PHP2Shell?* — as
+  `EXPOSED — YES`, `LIKELY EXPOSED — YES`, `NOT EXPOSED — NO` or
+  `INCONCLUSIVE — UNKNOWN`, with a plain-language statement and the single
+  `ACTION` that follows from it. The bottom line now leads with the same
+  answer (`YES — N targets hackable via PHP2Shell` / `UNKNOWN — …` /
+  `NO — …`), and the assessment-table `Hackability` cell prefixes it too.
+- `hackability` results carry `answer` (`yes`/`no`/`unknown`; `LIKELY`
+  answers `yes` because the burden is on disproving exposure) and `action`
+  (the one sentence of advice the answer implies). JSON exposes both under
+  `results.<target>.hackability`; Markdown prints a `Decision:` line per
+  target and a `Hackable?` column in the summary table; CSV adds `hackable`,
+  `answer` and `decision_action`; SARIF result properties and messages carry
+  the same decision. Chinese translations cover the card, the answer words
+  and the actions.
+- After a text report on an interactive terminal, the tool asks whether to
+  run safe follow-up checks: a fresh response with a neutral User-Agent, the
+  captured TLS/DNS data and a SARIF export. `--yes` skips the question,
+  `--no-interactive` disables it, and machine formats/quiet mode never prompt.
+  The browser-UA retry and active `nuclei` check stay behind `--authorized`;
+  the follow-up result is included in the exit code.
+- The default text report is now plain language: a `HACKABLE?` findings
+  column, a `DECISION` card, a `WHAT THIS MEANS` card and two next steps.
+  Scores, ratios, SAPI names, ATT&CK, defender checks, the evidence table and
+  the full remediation list moved behind `-v`.
+- Block pages are fingerprinted instead of being reduced to an anonymous
+  `403`: OVHcloud, Cloudflare, Akamai, Sucuri, Imperva, AWS WAF, F5,
+  Wordfence and ModSecurity are recognised from headers, titles and body
+  text. The report names the vendor and the message, and when the block is
+  likely User-Agent-sensitive it offers an explicit `--browser-ua` retry.
+- `--browser-ua` sends a browser-compatible User-Agent for bot-protection
+  compatibility. It is opt-in, labelled in the report, and never automatic:
+  it can cross a bot-control boundary, so it requires authorization.
+- A branch-only version on an end-of-life branch (for example `PHP/8.1`) is
+  now `eol` / exposed instead of `unknown`. Branch-only versions on branches
+  that still receive fixes remain `branch_only` / unverified.
+- When PHP is present but its version is hidden, the plain report says
+  `PHP present, version hidden` instead of an ambiguous `unknown`; the reason
+  is "PHP was detected, but the version was not exposed." This is the common
+  case on modern sites that strip `X-Powered-By`.
+- Statamic, Craft CMS, Magento, PrestaShop and OpenCart are now detected as
+  PHP evidence, so a site using one of them is not falsely reported as
+  "no PHP seen" just because the framework hides the `X-Powered-By` version.
+- Blocked or otherwise unverified hosts print `not observed` for PHP surface
+  fields, not `no`: a 403 is not evidence that PHP is absent.
+- The text report now follows the device language automatically: Simplified
+  Chinese when the locale is `zh*`, English otherwise. `--lang en|zh`,
+  `-en` and `-zh` override detection; `PHP2SHELL_LANG` provides the same
+  override without a flag, before `LC_ALL`/`LC_MESSAGES`/`LANGUAGE`/`LANG`
+  and the macOS user locale.
+- The Chinese text report covers UI labels, verdict/access/risk wording,
+  ATT&CK and detection prose, red-team notes, next actions, remediation and
+  the run summary. Missing entries fall back to English instead of showing a
+  translation key.
+- CJK-aware layout: Chinese, fullwidth characters and emoji count as two
+  terminal columns; wrapping and table padding use display width, and closing
+  punctuation is kept off the start of a line.
+- JSON, Markdown, SARIF, CSV and NDJSON remain English, and the CLI pins
+  their locale to `en` so a Chinese workstation cannot change a machine
+  contract.
+- The text report now leads with the bottom line and a plain-language "Next"
+  step, before the findings table.
+- Verdicts are printed as words (`INCONCLUSIVE`, `VULNERABLE`, `PATCHED`,
+  `UNVERIFIED`, `END-OF-LIFE`, `NO PHP`) and risk as a full grade
+  (`CRITICAL`, `HIGH`) instead of truncated codes (`INCON`, `VULN`, `CRIT`).
+- Automatic colour on a TTY for verdicts, risk, section headings and table
+  state; `--no-color`, `NO_COLOR`, `--output` and piped stdout stay plain.
+- Assessment cards omit empty rows (`Edge` when it duplicates `Server`, `CDN`
+  when none was seen, `Framework` when none was observed).
+- The toolchain is one line per tool; `--toolchain-full` adds the rationale
+  and the lower-priority entries.
+- Next actions are prioritised: the default view shows the four actions that
+  can resolve the verdict, `-v` shows the full list with rationale. Exposed
+  targets now include the SARIF handoff and sibling-host inventory actions
+  (the `:exposed` branch could never match an actual verdict status).
+- Duplicate ATT&CK `T1592` entries on unverified targets are merged into one.
+- The tips footer only advertises flags that were not already used.
+- Text width is capped at 110 columns for readability on wide terminals.
+
 ## 3.0.0 — 2026-10-24
 
 ### The headline

@@ -47,6 +47,20 @@ canary filename in the body is also treated as soft-404. The threshold is
 intentionally conservative: a false soft-404 costs extra verification; a false
 "open" would let path evidence lie.
 
+## Block-page fingerprinting
+
+A denial page is evidence about the edge, not the interpreter. The scanner
+recognises common block pages (OVHcloud, Cloudflare, Akamai, Sucuri, Imperva,
+AWS WAF, F5, Wordfence and ModSecurity) from headers, titles and visible body
+text. The report names the vendor and the message, so a blanket `403` becomes
+"OVHcloud blocked suspicious activity" instead of an anonymous dead end.
+
+When the block is likely User-Agent-sensitive, the report offers an explicit
+`--browser-ua` retry. That mode is opt-in, labelled in the report, and sends a
+browser-compatible User-Agent. It is not automatic: a UA change can cross a
+bot-control boundary, so it requires the same authorization check as any other
+vantage-point change.
+
 ## Adaptive early exit
 
 When access is `blocked`, `auth_wall`, `soft_404`, `rate_limited`,
@@ -63,7 +77,9 @@ Version is read from headers first, then `phpinfo()`. Header evidence is exact
 when it is present; `phpinfo()` is authoritative but rare. A branch-only value
 (`8.2`) is **not** promoted to a patch-level claim. It becomes
 `unknown` / `branch_only` with the fix floor shown so an operator can compare
-host-side.
+host-side. The exception is a branch-only value on an end-of-life branch
+(`8.1`, `8.0`, `7.4`, …): no patch level on that branch carries a fix, so it
+is reported as `eol` / exposed.
 
 A version observed on a `403`, `5xx` or restricted response is still reported,
 but with low confidence and an explicit caveat. A leaked version is useful
@@ -122,6 +138,23 @@ Friction is additive and separate:
 A WAF does not make a vulnerable parser patched. It changes the likelihood and
 reliability of exploitation. A CDN does not reduce exposure severity; it
 changes where the origin is and whether edge rules are the only control.
+
+## The decision answer
+
+The evidence rating is not the answer a decision-maker needs. Every result
+therefore also carries `hackability.answer`:
+
+- `yes` — a vulnerable or end-of-life interpreter was observed, or exposure
+  signals dominate enough that the host must be treated as hackable;
+- `no` — the interpreter meets the fix level, or no PHP surface was observed
+  on the probed paths;
+- `unknown` — the evidence is missing, blocked or only branch-level.
+
+`hackability.action` is the single sentence that follows from that answer.
+The text report puts the answer above the findings table and repeats it in
+the per-target `DECISION` card, so a reader can stop after the first lines.
+`unknown` is never rendered as `no`: a blocked or unversioned host is not
+evidence of a patched one.
 
 ## Hackability ratio
 

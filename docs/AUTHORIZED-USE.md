@@ -34,14 +34,19 @@ terms of service, or both.
 - Ordinary `GET` requests.
 - A small, bounded set of paths (root, canaries, `/index.php`, common PHP
   names, framework paths, `robots.txt`, `sitemap.xml`).
-- A User-Agent that identifies the tool and project.
+- A User-Agent that identifies the tool and project by default.
+- `--browser-ua` only when you explicitly ask for it: a browser-compatible
+  User-Agent for hosts whose bot protection rejects the identifying string.
+  It is not automatic and it is not a licence to bypass an authorization
+  boundary.
 - No POST, no payloads, no fuzzing, no authentication bypass, no rate-limit
   evasion.
 
 ## What it does not authorize
 
 - Bypassing a `403` by changing IP, proxy, Host header or User-Agent to evade
-  a control.
+  a control. `--browser-ua` is for bot-protection compatibility where the
+  program permits it, not for crossing an authorization boundary.
 - Authenticated testing without separate authorization.
 - Exploitation, persistence, data exfiltration or lateral movement.
 - Scanning an origin discovered behind a CDN unless the origin is in scope.
@@ -51,6 +56,16 @@ terms of service, or both.
 If a target blocks the scanner, the report says `BLOCKED`. That is the correct
 answer. Do not "fix" it by bypassing the block unless the program explicitly
 authorizes that vantage point.
+
+## Automated follow-up
+
+After a text report, the scanner can ask whether to run safe follow-up checks:
+a fresh response, the captured TLS/DNS data and a SARIF export. These are
+read-only and stay on the same target.
+
+A browser-compatible retry and active tools such as `nuclei` require
+`--authorized`. The prompt is a convenience, not a permission slip: the
+program scope and rules of engagement still decide whether either is allowed.
 
 ## Bug bounty notes
 

@@ -43,6 +43,9 @@ requires a schema bump.
   "patched": 0,
   "no_php": 0,
   "unverified": 1,
+  "hackable": 0,
+  "not_hackable": 0,
+  "decision_unknown": 1,
   "unknown": 0,
   "inconclusive": 1,
   "errors": 0,
@@ -67,20 +70,26 @@ requires a schema bump.
 `assessable = exposed + patched + no_php`. Coverage is probe-level, not
 target-level; `usable` counts `2xx/3xx` responses.
 
+`hackable`, `not_hackable` and `decision_unknown` count the per-target
+`hackability.answer` values (`yes`, `no`, `unknown`). They normally mirror
+`exposed`, `patched + no_php` and `unverified`, but they are the fields the
+human report uses for its bottom line so the summary cannot disagree with
+the per-target decision cards.
+
 ## Per-target object
 
 | Field | Type | Notes |
 |---|---|---|
 | `target` | object | `target`, `display`, `url`, `scheme`, `host`, `ascii_host`, `port`, `international`, `ip` |
 | `verdict` | object | See below |
-| `environment` | object | `server`, `via`, `edge`, `cdn`, `waf`, `hosting`, `sapi`, `sapi_rationale`, `frameworks`, `framework_versions`, `tls`, `dns`, `access` |
+| `environment` | object | `server`, `via`, `edge`, `cdn`, `waf`, `hosting`, `sapi`, `sapi_rationale`, `frameworks`, `framework_versions`, `tls`, `dns`, `block_page`, `access` |
 | `risk` | object | `score` (number or null), `grade`, `scale`, `friction` |
 | `attack` | object | `assessment_path[]`, `kill_chain[]` |
 | `detections` | array | `layer`, `control`, `detail` |
 | `red_team` | array of strings | Attacker-perspective notes |
 | `tooling` | array | `phase`, `tool`, `purpose`, `relevance`, `techniques`, `url`, `priority`, `offensive` |
 | `fingerprint` | object | Headers, cookies, statuses, paths, frameworks, PHP markers, control, coverage, TLS, DNS, discovery |
-| `hackability` | object | `rating`, `label`, `ratio` (number or null), counts, signals, prerequisites, reliability, impact, friction |
+| `hackability` | object | `rating`, `label`, `ratio` (number or null), `answer` (`yes`/`no`/`unknown`), `action`, `hackable` (boolean or null), counts, signals, prerequisites, reliability, impact, friction |
 | `remediation` | array of strings | What to do next |
 | `next_actions` | array | `label`, `command`, `why`, `authorized` |
 | `probes` | array | Evidence records; `body_excerpt` only with `--evidence` |
@@ -149,6 +158,24 @@ Reason codes include: `vulnerable`, `eol`, `patched`, `no_version`,
 
 A null `score` is not zero. It means the evidence was insufficient to assign
 exposure severity.
+
+### `environment.block_page`
+
+`null` when the response was not a block page. Otherwise:
+
+```json
+{
+  "vendor": "OVHcloud",
+  "summary": "Request blocked due to suspicious activity",
+  "title": "Your request has been blocked - OVHcloud",
+  "ua_sensitive": true,
+  "status": 403
+}
+```
+
+`vendor` is `null` for a generic edge denial that matches no known product.
+`ua_sensitive` is a hint that the scanner's identifying User-Agent may be the
+trigger, not proof that a different User-Agent will be allowed.
 
 ### `probes[]`
 
