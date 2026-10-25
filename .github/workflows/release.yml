@@ -8,20 +8,39 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.4"
           bundler-cache: true
+      - name: Verify the tag matches the gem version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version=$(ruby -Ilib -rphp2shell_poc2026/version -e 'print PHP2ShellPOC2026::VERSION')
+          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match gem version ${version}" >&2
+            exit 1
+          fi
       - name: Test
         run: bundle exec rake test
-      - name: Build gem
-        run: gem build php2shell_poc2026.gemspec
+      - name: Build and install the gem
+        run: |
+          gem build php2shell_poc2026.gemspec
+          gem install --local php2shell_poc2026-*.gem
+          php2shell --version
       - name: Publish to RubyGems
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           RUBYGEMS_API_KEY: ${{ secrets.RUBYGEMS_API_KEY }}
         run: |
@@ -30,7 +49,9 @@ jobs:
           chmod 0600 ~/.gem/credentials
           gem push php2shell_poc2026-*.gem
       - name: GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: php2shell_poc2026-*.gem
           generate_release_notes: true
+          fail_on_unmatched_files: true
