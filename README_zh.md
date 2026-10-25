@@ -589,3 +589,26 @@ POC 失败不能证明主机安全；POC 成功也不授权你继续做更多事
 
 只对你拥有或获得明确书面授权评估的系统使用。不要对军事、政府、关键基础设施
 或任何授权范围之外的系统使用。作者与贡献者不对滥用、损害或法律后果承担责任。
+
+---
+
+<div align="center">
+
+<h2>支持</h2>
+
+<p>如果您觉得本项目对您有帮助，欢迎请我喝杯咖啡</p>
+<p><sub>您的支持是我持续维护和改进的动力</sub></p>
+
+<br/>
+
+<strong>微信扫码捐赠</strong><br/><br/>
+<img src="https://raw.gitcode.com/ctkqiang_sr/ctkqiang_sr/raw/main/mm_reward_qrcode_1778988737577.png"
+     alt="微信扫码捐赠"
+     width="240"
+     style="border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
+
+<br/>
+<br/>
+</div>
+
+---
