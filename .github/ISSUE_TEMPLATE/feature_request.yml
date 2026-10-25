@@ -1,0 +1,84 @@
+name: Feature request
+description: Suggest a scanner, report, workflow or documentation improvement.
+title: "[feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. Please describe the problem first, then the
+        proposed change. Keep the project's safety model in mind: the scanner
+        stays GET-only, the POC stays opt-in, and missing evidence is never
+        reported as a clean verdict.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem would this feature solve? Who is affected?
+      placeholder: "When a host returns ..., the report does not explain ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the smallest change that solves the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches, workarounds or prior art.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Scanner / probes
+        - Verdict / risk / evidence
+        - Report format
+        - CLI / configuration
+        - Authorized POC
+        - Localization
+        - Documentation
+        - CI / release / repository tooling
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety impact
+      options:
+        - label: The scanner will remain GET-only.
+          required: true
+        - label: The POC will remain opt-in and will not gain a command-line flag.
+          required: true
+        - label: Missing or blocked evidence will not be reported as "not exposed".
+          required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Tests, fixtures, references or examples. Do not include target secrets.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched the existing issues and documentation before opening this one.
+          required: true
+        - label: I have not included live target secrets or personal data.
+          required: true

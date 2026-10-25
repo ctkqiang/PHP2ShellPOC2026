@@ -1,0 +1,78 @@
+name: Bug report
+description: Report a reproducible scanner, report, CLI or POC defect.
+title: "[bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a defect.
+
+        **Do not paste live target names, credentials, cookies, tokens, session
+        data or personal information.** Redact them before submitting. If the
+        issue is a vulnerability in this tool, use the private advisory link in
+        the issue chooser instead of opening a public issue.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `php2shell --version`.
+      placeholder: "3.0.0"
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Ruby and operating system
+      description: Include the Ruby version and OS.
+      placeholder: "Ruby 3.4.5 on macOS 15.5"
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command line
+      description: Redact credentials, cookies, tokens, hostnames and paths.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: What did you expect the scanner or POC to do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: What happened instead? Include the exit code when relevant.
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Relevant output
+      description: Paste only the relevant lines. Redact target-controlled data.
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I have redacted target names, credentials, cookies, tokens and personal data.
+          required: true
+        - label: I searched the existing issues before opening this one.
+          required: true
+        - label: This is a defect in the tool, not a request to attack a third-party system.
+          required: true
