@@ -86,6 +86,12 @@
 - Duplicate ATT&CK `T1592` entries on unverified targets are merged into one.
 - The tips footer only advertises flags that were not already used.
 - Text width is capped at 110 columns for readability on wide terminals.
+- GitHub repository tooling is now hardened: CI tests the minimum Ruby 2.7
+  and Ruby 3.1 through 3.4, builds and installs the gem, smoke-tests the
+  Docker image, cancels stale runs and checks the minimum supported Ruby
+  without Bundler. Releases verify the tag against the gem version before
+  publishing. Added CodeQL, dependency review, Dependabot, issue forms, a
+  pull-request template, a security policy and CODEOWNERS.
 
 ## 3.0.0 — 2026-10-24
 
