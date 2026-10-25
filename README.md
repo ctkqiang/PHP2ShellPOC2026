@@ -69,7 +69,6 @@ application. Absence of evidence was being sold as evidence of absence.
 ```sh
 gem install php2shell_poc2026
 php2shell --version
-php2shell-poc2026 --version   # long alias, same CLI
 ```
 
 ### From a checkout
@@ -581,7 +580,7 @@ report; it cannot answer the POC question.
 ## Project structure
 
 ```text
-bin/                     php2shell-poc2026 + php2shell
+bin/                     php2shell
 lib/php2shell_poc2026/
   cli.rb                 options, config, scope, threads, output, exit codes
   scanner.rb             adaptive orchestration, discovery, enrichment
@@ -608,7 +607,7 @@ test/                    Minitest suite with fake transports and local TCP
 ```sh
 bundle install
 bundle exec rake test
-ruby -Ilib bin/php2shell-poc2026 --dry-run https://example.com/
+ruby -Ilib bin/php2shell --dry-run https://example.com/
 gem build php2shell_poc2026.gemspec
 ```
 

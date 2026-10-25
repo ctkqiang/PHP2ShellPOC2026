@@ -14,5 +14,5 @@ RUN gem build php2shell_poc2026.gemspec \
 RUN addgroup -S scanner && adduser -S -G scanner scanner
 USER scanner
 
-ENTRYPOINT ["php2shell-poc2026"]
+ENTRYPOINT ["php2shell"]
 CMD ["--help"]

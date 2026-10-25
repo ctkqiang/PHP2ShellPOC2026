@@ -15,7 +15,7 @@ end
 
 desc "Run the CLI from the checkout"
 task :run do
-  sh "ruby -Ilib bin/php2shell-poc2026 --help"
+  sh "ruby -Ilib bin/php2shell --help"
 end
 
 task default: :test

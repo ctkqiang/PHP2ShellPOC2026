@@ -38,7 +38,7 @@ Gem::Specification.new do |spec|
     "LICENSE"
   ].reject { |path| File.directory?(path) }
   spec.bindir        = "bin"
-  spec.executables   = ["php2shell-poc2026", "php2shell"]
+  spec.executables   = ["php2shell"]
   spec.require_paths = ["lib"]
 
   spec.add_development_dependency "minitest", "~> 5.0"

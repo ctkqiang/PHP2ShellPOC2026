@@ -57,7 +57,6 @@ POC 没有命令行开关。
 ```sh
 gem install php2shell_poc2026
 php2shell --version
-php2shell-poc2026 --version   # 长别名，同一个 CLI
 ```
 
 ### 从源码检出安装
@@ -525,7 +524,7 @@ CI 永远不会运行 POC：提示需要交互式终端。发现暴露主机的 
 ## 项目结构
 
 ```text
-bin/                     php2shell-poc2026 + php2shell
+bin/                     php2shell
 lib/php2shell_poc2026/
   cli.rb                 选项、配置、范围、线程、输出、退出码
   scanner.rb             自适应编排、发现、增强信息
@@ -552,7 +551,7 @@ test/                    使用假传输和本地 TCP 的 Minitest 套件
 ```sh
 bundle install
 bundle exec rake test
-ruby -Ilib bin/php2shell-poc2026 --dry-run https://example.com/
+ruby -Ilib bin/php2shell --dry-run https://example.com/
 gem build php2shell_poc2026.gemspec
 ```
 
